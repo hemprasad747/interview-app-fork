@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,10 +28,10 @@ jobs:
 
       - name: Prepare release files
         run: |
-          mkdir -p deploy
-          cp dist/latest.yml deploy/
-          cp "dist/Interview App Setup"*.exe deploy/
-          ls -la deploy/
+          New-Item -ItemType Directory -Force -Path deploy
+          Copy-Item dist/latest.yml deploy/
+          Copy-Item "dist/Interview App Setup*.exe" deploy/
+          Get-ChildItem deploy
 
       - name: Deploy to Hostinger via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
