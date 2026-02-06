@@ -1,6 +1,6 @@
 {
   "name": "interview-app",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Interview app with audio capture, AI answers, and capture-protected window",
   "main": "main.js",
   "scripts": {
