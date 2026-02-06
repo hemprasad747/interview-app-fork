@@ -26,6 +26,7 @@
   "build": {
     "appId": "com.interview.app",
     "productName": "Interview App",
+    "publish": null,
     "win": {
       "target": "nsis", "signAndEditExecutable": false
     }
