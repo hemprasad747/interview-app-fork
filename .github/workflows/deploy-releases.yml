@@ -49,13 +49,12 @@ jobs:
           name: release-files
           path: deploy
 
-      - name: Deploy to Hostinger via SFTP
-        uses: wlixcc/SFTP-Deploy-Action@v1.2.4
+      - name: Deploy to Hostinger via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          port: 65002
-          sftp_only: true
-          local_path: './deploy/*'
-          remote_path: 'public_html/releases/'
+          local-dir: ./deploy/
+          server-dir: ./public_html/releases/
+          timeout: 300000
