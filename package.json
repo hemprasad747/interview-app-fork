@@ -26,13 +26,6 @@
   "build": {
     "appId": "com.interview.app",
     "productName": "Interview App",
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "hemprasad444",
-        "repo": "interview-app"
-      }
-    ],
     "win": {
       "target": "nsis", "signAndEditExecutable": false
     }
