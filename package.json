@@ -1,12 +1,12 @@
 {
   "name": "interview-app",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Interview app with audio capture, AI answers, and capture-protected window",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "dist": "electron-builder", "release": "electron-builder --publish always"
   },
   "author": "",
   "license": "MIT",
@@ -34,7 +34,7 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis", "signAndEditExecutable": false
     }
   }
 }

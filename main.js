@@ -979,6 +979,7 @@ ipcMain.handle('launcher-set-step-size', (_event, step) => {
 app.whenReady().then(() => {
   createWindow();
   if (process.platform === 'win32' && app.isPackaged) {
+    autoUpdater.setFeedURL({ provider: 'generic', url: 'https://alphaviewai.com/releases/' });
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.on('update-available', () => {});
     autoUpdater.on('update-downloaded', () => {});
