@@ -1,0 +1,67 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+ipcRenderer.on('ai-stream-chunk', (_e, chunk) => {
+  window.dispatchEvent(new CustomEvent('ai-stream-chunk', { detail: chunk }));
+});
+ipcRenderer.on('ai-stream-done', () => {
+  window.dispatchEvent(new CustomEvent('ai-stream-done'));
+});
+ipcRenderer.on('ai-stream-error', (_e, err) => {
+  window.dispatchEvent(new CustomEvent('ai-stream-error', { detail: err }));
+});
+
+contextBridge.exposeInMainWorld('floatingAPI', {
+  getAzureSpeechConfig: () => ipcRenderer.invoke('get-azure-speech-config'),
+  setSize: (state) => ipcRenderer.invoke('set-floating-size', state),
+  getWindowBounds: () => ipcRenderer.invoke('get-window-bounds'),
+  setWindowBounds: (opts) => ipcRenderer.invoke('set-window-bounds', opts),
+  startSession: (config) => ipcRenderer.invoke('start-session', config),
+  getSessionConfig: () => ipcRenderer.invoke('get-session-config'),
+  endSession: () => ipcRenderer.invoke('end-session'),
+  collapseSession: () => ipcRenderer.invoke('collapse-session'),
+  expandSession: () => ipcRenderer.invoke('expand-session'),
+  moveSessionToPosition: (position) => ipcRenderer.invoke('move-session-to-position', position),
+  showPositionOverlay: () => ipcRenderer.invoke('show-position-overlay'),
+  getPositionBounds: () => ipcRenderer.invoke('get-position-bounds'),
+  closePositionOverlay: () => ipcRenderer.send('close-position-overlay'),
+  onSessionMinimized: (cb) => { ipcRenderer.on('session-minimized', () => cb()); },
+  onSessionExpanded: (cb) => { ipcRenderer.on('session-expanded', () => cb()); },
+  onSessionEnded: (cb) => { ipcRenderer.on('session-ended', () => cb()); },
+  sendWaveLevels: (levels) => ipcRenderer.send('wave-levels', levels),
+  onWaveLevels: (cb) => { ipcRenderer.on('wave-levels', (_e, levels) => cb(levels)); },
+  getConversationHistory: () => ipcRenderer.invoke('get-conversation-history'),
+  getTranscriptHistory: () => ipcRenderer.invoke('get-transcript-history'),
+  getLiveTranscript: () => ipcRenderer.invoke('get-live-transcript'),
+  setLiveTranscript: (opts) => ipcRenderer.invoke('set-live-transcript', opts),
+  getTimer: () => ipcRenderer.invoke('get-timer'),
+  clearHistory: () => ipcRenderer.invoke('clear-history'),
+  appendTranscript: (item) => ipcRenderer.invoke('append-transcript', item),
+  appendConversation: (userContent, assistantContent) => ipcRenderer.invoke('append-conversation', userContent, assistantContent),
+  getRightPanelBounds: () => ipcRenderer.invoke('get-right-panel-bounds'),
+  setRightPanelBounds: (opts) => ipcRenderer.invoke('set-right-panel-bounds', opts),
+  getLayoutInverted: () => ipcRenderer.invoke('get-layout-inverted'),
+  onLayoutInverted: (cb) => { ipcRenderer.on('layout-inverted', (_e, inverted) => cb(inverted)); },
+  toggleHistoryPanel: () => ipcRenderer.invoke('toggle-history-panel'),
+  getHistoryVisible: () => ipcRenderer.invoke('get-history-visible'),
+  setHistoryPanelVisible: (visible) => ipcRenderer.invoke('set-history-panel-visible', visible),
+  onHistoryVisibleChanged: (cb) => { ipcRenderer.on('history-visible-changed', (_e, visible) => cb(visible)); },
+  setSnakeBarVisible: (visible) => ipcRenderer.invoke('set-snake-bar-visible', visible),
+  getSnakeBarVisible: () => ipcRenderer.invoke('get-snake-bar-visible'),
+  requestAskQuestion: (q) => ipcRenderer.invoke('request-ai-question', q),
+  setManualMode: (expanded) => ipcRenderer.invoke('set-manual-mode', expanded),
+  sendManualState: (expanded) => ipcRenderer.send('manual-state', expanded),
+  onTimerTick: (cb) => { ipcRenderer.on('timer-tick', (_e, seconds) => cb(seconds)); },
+  onHistoryUpdated: (cb) => { ipcRenderer.on('history-updated', () => cb()); },
+  onLiveTranscriptUpdated: (cb) => { ipcRenderer.on('live-transcript-updated', () => cb()); },
+  onAskQuestion: (cb) => { ipcRenderer.on('ask-question', (_e, q) => cb(q)); },
+  callAI: (payload) => ipcRenderer.invoke('call-ai', payload),
+  callAIStream: (payload) => ipcRenderer.invoke('call-ai-stream', payload),
+  analyzeImage: (payload) => ipcRenderer.invoke('analyze-image', payload),
+  transcribeAudio: (base64Audio, mimeType) => ipcRenderer.invoke('transcribe-audio', base64Audio, mimeType),
+  windowMinimize: () => ipcRenderer.send('window-minimize'),
+  windowMaximize: () => ipcRenderer.send('window-maximize'),
+  windowClose: () => ipcRenderer.send('window-close'),
+  launcherMinimizeToIcon: () => ipcRenderer.invoke('launcher-minimize-to-icon'),
+  launcherRestoreFromIcon: () => ipcRenderer.invoke('launcher-restore-from-icon'),
+  launcherSetStepSize: (step) => ipcRenderer.invoke('launcher-set-step-size', step),
+});

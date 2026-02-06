@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Position</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent !important;
+      overflow: hidden;
+    }
+    #overlay-backdrop,
+    #overlay-zones {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+    }
+    #overlay-backdrop {
+      z-index: 0;
+      pointer-events: auto;
+    }
+    #overlay-zones {
+      z-index: 1;
+      pointer-events: none;
+    }
+    .position-zone {
+      pointer-events: auto;
+    }
+    .position-zone {
+      position: absolute;
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 12px;
+      cursor: pointer;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .position-zone:hover {
+      background: rgba(0, 0, 0, 0.55);
+      border-color: rgba(255, 255, 255, 0.35);
+    }
+    .position-zone-title {
+      height: 6px;
+      min-height: 6px;
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 12px 12px 0 0;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="overlay-backdrop" aria-label="Click to close"></div>
+  <div id="overlay-zones"></div>
+  <script>
+    (function() {
+      const zonesEl = document.getElementById('overlay-zones');
+      const backdropEl = document.getElementById('overlay-backdrop');
+
+      function close() {
+        if (window.floatingAPI?.closePositionOverlay) window.floatingAPI.closePositionOverlay();
+      }
+
+      function onZoneClick(position) {
+        if (window.floatingAPI?.moveSessionToPosition) window.floatingAPI.moveSessionToPosition(position);
+        if (window.floatingAPI?.closePositionOverlay) window.floatingAPI.closePositionOverlay();
+      }
+
+      backdropEl.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+      });
+
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          close();
+        }
+      });
+
+      (async function renderZones() {
+        if (!window.floatingAPI?.getPositionBounds) return;
+        const bounds = await window.floatingAPI.getPositionBounds();
+        if (!Array.isArray(bounds) || bounds.length === 0) return;
+        zonesEl.innerHTML = '';
+        bounds.forEach(function(b) {
+          const zone = document.createElement('div');
+          zone.className = 'position-zone';
+          zone.setAttribute('data-position', b.position);
+          zone.style.left = b.x + 'px';
+          zone.style.top = b.y + 'px';
+          zone.style.width = b.width + 'px';
+          zone.style.height = b.height + 'px';
+          zone.innerHTML = '<div class="position-zone-title"></div>';
+          zone.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            onZoneClick(b.position);
+          });
+          zonesEl.appendChild(zone);
+        });
+      })();
+    })();
+  </script>
+</body>
+</html>

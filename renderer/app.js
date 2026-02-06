@@ -1,0 +1,877 @@
+const viewIcon = document.getElementById('view-icon');
+const viewMenu = document.getElementById('view-menu');
+const viewBar = document.getElementById('view-bar');
+const btnIcon = document.getElementById('btn-icon');
+const btnIconMenu = document.getElementById('btn-icon-menu');
+const btnStartSession = document.getElementById('btn-start-session');
+const btnEndSession = document.getElementById('btn-end-session');
+const barTimer = document.getElementById('bar-timer');
+const questionInput = document.getElementById('question-input');
+const btnAskAi = document.getElementById('btn-ask-ai');
+const aiPlaceholder = document.getElementById('ai-response-placeholder');
+const aiLoading = document.getElementById('ai-response-loading');
+const aiText = document.getElementById('ai-response-text');
+const aiError = document.getElementById('ai-response-error');
+const aiQuestionText = document.getElementById('ai-question-text');
+const historyList = document.getElementById('history-list');
+const btnCollapse = document.getElementById('btn-collapse');
+const btnMic = document.getElementById('btn-mic');
+const btnSystemAudio = document.getElementById('btn-system-audio');
+const btnClearResponse = document.getElementById('btn-clear-response');
+const btnHistoryAutoScroll = document.getElementById('btn-history-autoscroll');
+const btnHideHistory = document.getElementById('btn-hide-history');
+const btnHideResponse = document.getElementById('btn-hide-response');
+const historyPanel = document.getElementById('history-area');
+const responsePanel = document.getElementById('response-panel');
+
+let timerInterval = null;
+let seconds = 0;
+let aiBusy = false;
+let sessionActive = false;
+let suppressIconClick = false;
+// Full conversation for follow-up context (user + assistant messages only; system added when sending)
+const MAX_HISTORY_MESSAGES = 10;
+const MAX_HISTORY_DISPLAY = 6;
+let conversationHistory = [];
+// Live transcriptions from mic (shown in history)
+let transcriptHistory = [];
+let speechRecognition = null;
+let azureRecognizer = null;
+let liveTranscriptBuffer = '';
+let isMicRecording = false;
+let useWhisperFallback = false;
+let lastSpeechError = null;
+let mediaRecorder = null;
+let audioStream = null;
+let recordingChunks = [];
+let isSystemAudioCapturing = false;
+let systemAudioStream = null;
+let systemAudioRecorder = null;
+let systemAudioAzureRecognizer = null;
+let systemAudioQuestionBuffer = '';
+let systemAudioLiveBuffer = '';
+let systemAudioPauseTimer = null;
+// Smaller = faster auto-answer after silence
+const SYSTEM_AUDIO_PAUSE_MS = 450;
+let historyAutoScroll = true;
+
+function setHistoryAutoScroll(enabled) {
+  historyAutoScroll = !!enabled;
+  if (btnHistoryAutoScroll) {
+    btnHistoryAutoScroll.classList.toggle('panel-pill-active', historyAutoScroll);
+  }
+}
+
+// Click-through: only active when bar view is visible
+const PASS_THROUGH_THROTTLE_MS = 16;
+const PASS_THROUGH_RECOVER_MS = 200;
+let passThroughIgnore = null;
+let passThroughLastTime = 0;
+let passThroughRecoverTimer = null;
+let passThroughMoveBound = null;
+let passThroughLeaveBound = null;
+
+function startPassThrough() {
+  if (!window.floatingAPI?.setIgnoreMouseEvents) return;
+  passThroughIgnore = null;
+  passThroughMoveBound = function (e) {
+    if (viewBar.classList.contains('hidden')) return;
+    const now = Date.now();
+    if (now - passThroughLastTime < PASS_THROUGH_THROTTLE_MS) return;
+    passThroughLastTime = now;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const overTransparent = el && el.closest('[data-transparent="true"]') && !el.closest('[data-no-pass-through="true"]');
+    if (overTransparent === passThroughIgnore) return;
+    passThroughIgnore = overTransparent;
+    window.floatingAPI.setIgnoreMouseEvents(overTransparent);
+  };
+  passThroughLeaveBound = function () {
+    if (passThroughIgnore === false) return;
+    passThroughIgnore = false;
+    window.floatingAPI.setIgnoreMouseEvents(false);
+  };
+  document.addEventListener('mousemove', passThroughMoveBound);
+  document.addEventListener('mouseleave', passThroughLeaveBound);
+  // When cursor moves from transparent area to history (same window), we get no event; un-ignore periodically so next mousemove can fix state
+  passThroughRecoverTimer = setInterval(function () {
+    if (passThroughIgnore !== true) return;
+    window.floatingAPI.setIgnoreMouseEvents(false);
+    passThroughIgnore = null;
+  }, PASS_THROUGH_RECOVER_MS);
+}
+
+function stopPassThrough() {
+  if (passThroughMoveBound) {
+    document.removeEventListener('mousemove', passThroughMoveBound);
+    passThroughMoveBound = null;
+  }
+  if (passThroughLeaveBound) {
+    document.removeEventListener('mouseleave', passThroughLeaveBound);
+    passThroughLeaveBound = null;
+  }
+  if (passThroughRecoverTimer) {
+    clearInterval(passThroughRecoverTimer);
+    passThroughRecoverTimer = null;
+  }
+  passThroughIgnore = null;
+  if (window.floatingAPI?.setIgnoreMouseEvents) window.floatingAPI.setIgnoreMouseEvents(false);
+}
+
+function showView(name) {
+  viewIcon.classList.add('hidden');
+  viewMenu.classList.add('hidden');
+  viewBar.classList.add('hidden');
+  if (name === 'icon') {
+    viewIcon.classList.remove('hidden');
+    stopPassThrough();
+  } else if (name === 'menu') {
+    viewMenu.classList.remove('hidden');
+    stopPassThrough();
+  } else if (name === 'bar') {
+    viewBar.classList.remove('hidden');
+    startPassThrough();
+  }
+}
+
+function startTimer() {
+  seconds = 0;
+  barTimer.textContent = '0:00';
+  timerInterval = setInterval(() => {
+    seconds++;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    barTimer.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+  }, 1000);
+}
+
+function stopTimer() {
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = null;
+}
+
+// Icon click → show menu, resize to menu
+btnIcon.addEventListener('click', () => {
+  if (suppressIconClick) {
+    suppressIconClick = false;
+    return;
+  }
+  if (!window.floatingAPI?.setSize) return;
+  if (sessionActive) {
+    window.floatingAPI.setSize('bar');
+    showView('bar');
+  } else {
+    window.floatingAPI.setSize('menu');
+    showView('menu');
+  }
+});
+
+// Icon click when menu visible → back to icon (optional: or keep menu open)
+btnIconMenu.addEventListener('click', () => {
+  if (!window.floatingAPI?.setSize) return;
+  window.floatingAPI.setSize('icon');
+  showView('icon');
+});
+
+// Start Session → show bar, resize to bar
+btnStartSession.addEventListener('click', () => {
+  if (!window.floatingAPI?.setSize) return;
+  window.floatingAPI.setSize('bar');
+  showView('bar');
+  startTimer();
+  renderHistory();
+  sessionActive = true;
+});
+
+// End Session → back to icon, clear conversation for next session
+btnEndSession.addEventListener('click', () => {
+  if (!window.floatingAPI?.setSize) return;
+  stopTimer();
+  stopMic();
+  stopSystemAudio();
+  useWhisperFallback = false;
+  conversationHistory = [];
+  transcriptHistory = [];
+  window.floatingAPI.setSize('icon');
+  showView('icon');
+  sessionActive = false;
+});
+
+// Clear history (delete all in history block)
+const btnClearHistory = document.getElementById('btn-clear-history');
+if (btnClearHistory) {
+  btnClearHistory.addEventListener('click', () => {
+    conversationHistory = [];
+    transcriptHistory = [];
+    liveTranscriptBuffer = '';
+    renderHistory();
+  });
+}
+
+if (btnHistoryAutoScroll) {
+  setHistoryAutoScroll(true);
+  btnHistoryAutoScroll.addEventListener('click', () => {
+    setHistoryAutoScroll(!historyAutoScroll);
+  });
+}
+
+if (historyList) {
+  historyList.addEventListener('scroll', () => {
+    if (!historyAutoScroll) return;
+    const atBottom = historyList.scrollTop + historyList.clientHeight >= historyList.scrollHeight - 2;
+    if (!atBottom) setHistoryAutoScroll(false);
+  });
+}
+
+if (btnClearResponse) {
+  btnClearResponse.addEventListener('click', () => {
+    if (aiQuestionText) aiQuestionText.textContent = '';
+    if (aiText) aiText.textContent = '';
+    showAiState('placeholder');
+  });
+}
+
+if (btnHideHistory && historyPanel) {
+  btnHideHistory.addEventListener('click', () => {
+    historyPanel.classList.toggle('hidden');
+  });
+}
+
+if (btnHideResponse && responsePanel) {
+  btnHideResponse.addEventListener('click', () => {
+    responsePanel.classList.toggle('hidden');
+  });
+}
+
+// Mic: Azure Speech (primary), Web Speech, or Whisper fallback
+function stopMic() {
+  if (!isMicRecording) return;
+  isMicRecording = false;
+  if (azureRecognizer) {
+    try {
+      azureRecognizer.stopContinuousRecognitionAsync(() => {}, () => {});
+    } catch (_) {}
+    azureRecognizer.close();
+    azureRecognizer = null;
+  }
+  if (speechRecognition) {
+    try { speechRecognition.stop(); } catch (_) {}
+    speechRecognition = null;
+  }
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    try { mediaRecorder.stop(); } catch (_) {}
+  }
+  if (audioStream) {
+    audioStream.getTracks().forEach((t) => t.stop());
+    audioStream = null;
+  }
+  mediaRecorder = null;
+  recordingChunks = [];
+  liveTranscriptBuffer = '';
+  if (btnMic) btnMic.classList.remove('mic-active');
+  renderHistory();
+}
+
+function addTranscriptionToHistory(text, time, source = 'mic') {
+  if (!text || !text.trim()) return;
+  if (!sessionActive) return;
+  transcriptHistory.push({ text: text.trim(), time: time || new Date(), source });
+  setHistoryAutoScroll(true); // scroll down to new transcription
+  renderHistory();
+}
+
+function showSpeechErrorOnce(msg) {
+  if (lastSpeechError === msg) return;
+  lastSpeechError = msg;
+  addTranscriptionToHistory('[Speech: ' + msg + '] Using streaming Whisper (~1.5s chunks).', new Date());
+}
+
+async function transcribeChunk(blob, mimeType) {
+  if (!window.floatingAPI?.transcribeAudio || blob.size < 500) return null;
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64 = reader.result.split(',')[1] || '';
+      if (!base64) { resolve(null); return; }
+      try {
+        const result = await window.floatingAPI.transcribeAudio(base64, mimeType);
+        resolve(result);
+      } catch (e) {
+        resolve({ error: e.message });
+      }
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function startWhisperFallback() {
+  try {
+    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    addTranscriptionToHistory('[Mic error: ' + (e.message || 'Permission denied') + ']', new Date());
+    return;
+  }
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm' : 'audio/webm';
+  mediaRecorder = new MediaRecorder(audioStream);
+  mediaRecorder.ondataavailable = async (e) => {
+    if (!isMicRecording || !sessionActive || e.data.size < 500) return;
+    const blob = e.data;
+    const result = await transcribeChunk(blob, mimeType);
+    if (result?.text) addTranscriptionToHistory(result.text, new Date());
+    else if (result?.error && !result.error.includes('Empty')) addTranscriptionToHistory('[Whisper: ' + result.error + ']', new Date());
+  };
+  mediaRecorder.onstop = () => {};
+  mediaRecorder.start(1500);
+  isMicRecording = true;
+  if (btnMic) btnMic.classList.add('mic-active');
+}
+
+async function startAzureSpeech(key, region, language) {
+  const sdk = window.SpeechSDK || window.Microsoft?.CognitiveServices?.Speech;
+  if (!sdk) {
+    addTranscriptionToHistory('[Azure SDK not loaded]', new Date());
+    return false;
+  }
+  const lang = (language || 'en-US').trim() || 'en-US';
+  try {
+    const speechConfig = sdk.SpeechConfig.fromSubscription(key, region);
+    speechConfig.speechRecognitionLanguage = lang;
+    // Speed up "final" results (end-of-utterance) for low latency
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '2000');
+    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationStrategy, 'Time');
+    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, '350');
+    speechConfig.setProperty(sdk.PropertyId.Speech_StartEventSensitivity, 'high');
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, '1');
+    const audioConfig = sdk.AudioConfig.fromDefaultMicrophoneInput();
+    azureRecognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
+    liveTranscriptBuffer = '';
+    azureRecognizer.recognizing = (s, e) => {
+      if (!sessionActive || !isMicRecording) return;
+      if (e.result.reason === sdk.ResultReason.RecognizingSpeech && e.result.text) {
+        liveTranscriptBuffer = e.result.text;
+        setHistoryAutoScroll(true);
+        renderHistory();
+      }
+    };
+    azureRecognizer.recognized = (s, e) => {
+      if (!sessionActive || !isMicRecording) return;
+      if (e.result.reason === sdk.ResultReason.RecognizedSpeech && e.result.text) {
+        addTranscriptionToHistory(e.result.text, new Date());
+        liveTranscriptBuffer = '';
+        renderHistory();
+      }
+    };
+    azureRecognizer.canceled = (s, e) => {
+      if (e.reason === sdk.CancellationReason.Error) {
+        addTranscriptionToHistory('[Azure: ' + (e.errorDetails || e.errorCode) + ']', new Date());
+        useWhisperFallback = true;
+        stopMic();
+        startWhisperFallback();
+      }
+    };
+    await azureRecognizer.startContinuousRecognitionAsync();
+    isMicRecording = true;
+    if (btnMic) btnMic.classList.add('mic-active');
+    return true;
+  } catch (e) {
+    addTranscriptionToHistory('[Azure: ' + (e.message || e) + ']', new Date());
+    return false;
+  }
+}
+
+async function startMic() {
+  if (isMicRecording) return;
+  lastSpeechError = null;
+  if (useWhisperFallback) {
+    startWhisperFallback();
+    return;
+  }
+  const azureConfig = await (window.floatingAPI?.getAzureSpeechConfig?.() || Promise.resolve(null));
+  if (azureConfig?.key && azureConfig?.region) {
+    const ok = await startAzureSpeech(azureConfig.key, azureConfig.region, azureConfig.language);
+    if (ok) return;
+    useWhisperFallback = true;
+    startWhisperFallback();
+    return;
+  }
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    addTranscriptionToHistory('[Live transcription not supported] Using Whisper fallback.', new Date());
+    useWhisperFallback = true;
+    startWhisperFallback();
+    return;
+  }
+  let sessionLang = azureConfig?.language || 'en-US';
+  if (!sessionLang && window.floatingAPI?.getSessionConfig) {
+    const cfg = await (window.floatingAPI.getSessionConfig() || Promise.resolve(null));
+    sessionLang = (cfg?.language || 'en-US').trim() || 'en-US';
+  }
+  speechRecognition = new SpeechRecognition();
+  speechRecognition.continuous = true;
+  speechRecognition.interimResults = true;
+  speechRecognition.lang = (sessionLang || 'en-US').trim() || 'en-US';
+  liveTranscriptBuffer = '';
+  speechRecognition.onresult = (e) => {
+    if (!sessionActive || !isMicRecording) return;
+    let interim = '';
+    let final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      const t = (r[0]?.transcript || '').trim();
+      if (r.isFinal) final += t;
+      else interim += t;
+    }
+    if (final) {
+      addTranscriptionToHistory(final, new Date());
+      liveTranscriptBuffer = interim;
+    } else {
+      liveTranscriptBuffer = interim;
+    }
+    setHistoryAutoScroll(true);
+    renderHistory();
+  };
+  speechRecognition.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'permission-denied') {
+      addTranscriptionToHistory('[Mic permission denied]', new Date());
+      stopMic();
+    } else if (e.error === 'network' || e.error === 'service-not-allowed') {
+      showSpeechErrorOnce(e.error);
+      useWhisperFallback = true;
+      stopMic();
+      startWhisperFallback();
+    } else if (e.error !== 'aborted' && e.error !== 'no-speech') {
+      showSpeechErrorOnce(e.error || 'Unknown');
+    }
+  };
+  speechRecognition.onend = () => {
+    if (isMicRecording && speechRecognition && !useWhisperFallback) {
+      try { speechRecognition.start(); } catch (_) {}
+    }
+  };
+  try {
+    speechRecognition.start();
+    isMicRecording = true;
+    if (btnMic) btnMic.classList.add('mic-active');
+  } catch (e) {
+    addTranscriptionToHistory('[Mic error: ' + (e.message || 'Failed to start') + ']', new Date());
+  }
+}
+
+function toggleMic() {
+  if (isMicRecording) stopMic();
+  else startMic();
+}
+
+if (btnMic) btnMic.addEventListener('click', () => { toggleMic(); });
+
+function stopSystemAudio() {
+  if (!isSystemAudioCapturing) return;
+  isSystemAudioCapturing = false;
+  if (systemAudioPauseTimer) {
+    clearTimeout(systemAudioPauseTimer);
+    systemAudioPauseTimer = null;
+  }
+  systemAudioQuestionBuffer = '';
+  systemAudioLiveBuffer = '';
+  if (systemAudioAzureRecognizer) {
+    try {
+      systemAudioAzureRecognizer.stopContinuousRecognitionAsync(() => {}, () => {});
+    } catch (_) {}
+    try { systemAudioAzureRecognizer.close(); } catch (_) {}
+    systemAudioAzureRecognizer = null;
+  }
+  if (systemAudioRecorder && systemAudioRecorder.state !== 'inactive') {
+    try { systemAudioRecorder.stop(); } catch (_) {}
+  }
+  systemAudioRecorder = null;
+  if (systemAudioStream) {
+    systemAudioStream.getTracks().forEach((t) => t.stop());
+    systemAudioStream = null;
+  }
+  if (btnSystemAudio) btnSystemAudio.classList.remove('system-audio-active');
+  renderHistory();
+}
+
+function flushSystemAudioQuestion() {
+  if (systemAudioPauseTimer) {
+    clearTimeout(systemAudioPauseTimer);
+    systemAudioPauseTimer = null;
+  }
+  const q = (systemAudioQuestionBuffer || '').trim();
+  systemAudioQuestionBuffer = '';
+  renderHistory();
+  if (q && !aiBusy && window.floatingAPI?.callAIStream) askAiWithQuestion(q);
+}
+
+async function startSystemAudio() {
+  if (isSystemAudioCapturing) return;
+  if (!sessionActive) return;
+  const azureConfig = await (window.floatingAPI?.getAzureSpeechConfig?.() || Promise.resolve(null));
+  if (!azureConfig?.key || !azureConfig?.region) {
+    addTranscriptionToHistory('[System audio: AZURE_SPEECH_KEY and AZURE_SPEECH_REGION required]', new Date(), 'system');
+    return;
+  }
+  const sdk = window.SpeechSDK || window.Microsoft?.CognitiveServices?.Speech;
+  if (!sdk) {
+    addTranscriptionToHistory('[System audio: Azure Speech SDK not loaded]', new Date(), 'system');
+    return;
+  }
+  try {
+    systemAudioStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    const audioTracks = systemAudioStream.getAudioTracks();
+    if (audioTracks.length === 0) {
+      const msg = /win/i.test(navigator.platform) ? '[System audio: No audio. Share a screen and ensure "Share audio" is checked.]' : '[System audio: System audio capture is only supported on Windows.]';
+      addTranscriptionToHistory(msg, new Date(), 'system');
+      systemAudioStream.getTracks().forEach((t) => t.stop());
+      systemAudioStream = null;
+      return;
+    }
+    const audioStream = new MediaStream(audioTracks);
+    const speechConfig = sdk.SpeechConfig.fromSubscription(azureConfig.key, azureConfig.region);
+    const sysLang = (azureConfig.language || 'en-US').trim() || 'en-US';
+    speechConfig.speechRecognitionLanguage = sysLang;
+    // Speed up "final" results (end-of-utterance) for low latency
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '2000');
+    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationStrategy, 'Time');
+    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, '350');
+    speechConfig.setProperty(sdk.PropertyId.Speech_StartEventSensitivity, 'high');
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, '1');
+    const audioConfig = sdk.AudioConfig.fromStreamInput(audioStream);
+    systemAudioAzureRecognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
+    systemAudioQuestionBuffer = '';
+    systemAudioLiveBuffer = '';
+    systemAudioAzureRecognizer.recognizing = (s, e) => {
+      if (!isSystemAudioCapturing || !sessionActive) return;
+      if (e.result.reason === sdk.ResultReason.RecognizingSpeech && e.result.text) {
+        systemAudioLiveBuffer = e.result.text;
+        setHistoryAutoScroll(true);
+        renderHistory();
+      }
+    };
+    systemAudioAzureRecognizer.recognized = (s, e) => {
+      if (!isSystemAudioCapturing || !sessionActive) return;
+      if (e.result.reason === sdk.ResultReason.RecognizedSpeech && e.result.text) {
+        const text = e.result.text.trim();
+        if (text) {
+          systemAudioQuestionBuffer = (systemAudioQuestionBuffer ? systemAudioQuestionBuffer + ' ' : '') + text;
+          systemAudioLiveBuffer = '';
+          if (systemAudioPauseTimer) clearTimeout(systemAudioPauseTimer);
+          systemAudioPauseTimer = setTimeout(flushSystemAudioQuestion, SYSTEM_AUDIO_PAUSE_MS);
+          setHistoryAutoScroll(true);
+          renderHistory();
+        }
+      }
+    };
+    systemAudioAzureRecognizer.canceled = (s, e) => {
+      if (e.reason === sdk.CancellationReason.Error) {
+        addTranscriptionToHistory('[System audio: ' + (e.errorDetails || e.errorCode) + ']', new Date(), 'system');
+      }
+    };
+    systemAudioStream.getTracks().forEach((t) => { t.onended = () => { stopSystemAudio(); }; });
+    await systemAudioAzureRecognizer.startContinuousRecognitionAsync();
+    isSystemAudioCapturing = true;
+    if (btnSystemAudio) btnSystemAudio.classList.add('system-audio-active');
+  } catch (e) {
+    const msg = e.message || e.name || 'Permission denied or cancelled';
+    const hint = /not supported|notsupported/i.test(msg) && /win/i.test(navigator.platform)
+      ? ' Try restarting the app. System audio requires Windows.'
+      : '';
+    addTranscriptionToHistory('[System audio: ' + msg + hint + ']', new Date(), 'system');
+    if (systemAudioStream) {
+      systemAudioStream.getTracks().forEach((t) => t.stop());
+      systemAudioStream = null;
+    }
+  }
+}
+
+function toggleSystemAudio() {
+  if (isSystemAudioCapturing) stopSystemAudio();
+  else startSystemAudio();
+}
+
+if (btnSystemAudio) btnSystemAudio.addEventListener('click', () => { toggleSystemAudio(); });
+
+if (btnCollapse) {
+  btnCollapse.addEventListener('click', () => {
+    if (!window.floatingAPI?.setSize) return;
+    stopMic();
+    stopSystemAudio();
+    window.floatingAPI.setSize('icon');
+    showView('icon');
+  });
+}
+
+// Drag the collapsed mic icon freely around the screen
+if (viewIcon && window.floatingAPI?.getWindowBounds && window.floatingAPI?.setWindowBounds) {
+  let iconDragStart = null;
+  let iconDragMoved = false;
+
+  viewIcon.addEventListener('mousedown', (e) => {
+    if (viewIcon.classList.contains('hidden')) return;
+    if (e.button !== 0) return;
+    e.preventDefault();
+    window.floatingAPI.getWindowBounds().then((b) => {
+      if (!b) return;
+      iconDragStart = { x: e.screenX, y: e.screenY, winX: b.x, winY: b.y };
+      iconDragMoved = false;
+    });
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!iconDragStart) return;
+    const dx = e.screenX - iconDragStart.x;
+    const dy = e.screenY - iconDragStart.y;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) iconDragMoved = true;
+    window.floatingAPI.setWindowBounds({ x: iconDragStart.winX + dx, y: iconDragStart.winY + dy });
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!iconDragStart) return;
+    if (iconDragMoved) suppressIconClick = true;
+    iconDragStart = null;
+  });
+}
+
+function showAiState(which) {
+  if (!aiPlaceholder || !aiLoading || !aiText || !aiError) return;
+  aiPlaceholder.classList.add('hidden');
+  aiLoading.classList.add('hidden');
+  aiText.classList.add('hidden');
+  aiError.classList.add('hidden');
+  if (which === 'placeholder') {
+    if (aiText.textContent.trim()) which = 'text';
+    else aiPlaceholder.classList.remove('hidden');
+  }
+  if (which === 'loading') aiLoading.classList.remove('hidden');
+  else if (which === 'text') aiText.classList.remove('hidden');
+  else if (which === 'error') aiError.classList.remove('hidden');
+}
+
+const SYSTEM_PROMPT = 'You are a helpful assistant. Answer in 1–3 short sentences. Use the conversation history to answer follow-up questions.';
+
+function onStreamChunk(chunk) {
+  if (!aiText) return;
+  aiText.textContent += chunk;
+  showAiState('text');
+}
+
+function onStreamDone(currentQuestion) {
+  aiBusy = false;
+  if (!aiText) return;
+  const fullResponse = (aiText.textContent || '').trim() || '(No response)';
+  if (!aiText.textContent.trim()) aiText.textContent = '(No response)';
+  showAiState('text');
+  aiText.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  const now = new Date();
+  conversationHistory.push({ role: 'user', content: currentQuestion, time: now });
+  conversationHistory.push({ role: 'assistant', content: fullResponse, time: now });
+  if (conversationHistory.length > MAX_HISTORY_MESSAGES) {
+    conversationHistory = conversationHistory.slice(-MAX_HISTORY_MESSAGES);
+  }
+  setHistoryAutoScroll(true); // scroll down to new Q&A
+  renderHistory();
+  const footerTime = document.getElementById('ai-answer-time');
+  if (footerTime) footerTime.textContent = formatTimePM(now);
+}
+
+function renderHistory() {
+  if (!historyList) return;
+  historyList.innerHTML = '';
+  const items = [];
+  const pairs = Math.floor(conversationHistory.length / 2);
+  const startPairs = Math.max(0, pairs - MAX_HISTORY_DISPLAY) * 2;
+  for (let i = startPairs; i < conversationHistory.length; i += 2) {
+    const userMsg = conversationHistory[i];
+    const assistantMsg = conversationHistory[i + 1];
+    if (userMsg?.role !== 'user' || !assistantMsg) continue;
+    items.push({ text: (userMsg.content || '').trim() || '—', time: userMsg.time, source: 'qa' });
+  }
+  for (const t of transcriptHistory) {
+    items.push({ text: t.text, time: t.time, source: t.source || 'mic' });
+  }
+  items.sort((a, b) => (a.time?.getTime?.() || 0) - (b.time?.getTime?.() || 0));
+  const recent = items.slice(-MAX_HISTORY_DISPLAY * 2);
+  for (const it of recent) {
+    const q = it.text || '—';
+    const timeStr = it.time ? formatTimePM(it.time) : '06:56 PM';
+    const label = it.source === 'system' ? 'System' : it.source === 'mic' ? 'Mic' : 'Client 1';
+    const canAsk = (it.source === 'mic' || it.source === 'system') && q.length > 3;
+    const isLeft = it.source === 'system';
+    const sideClass = isLeft ? 'history-item-left' : 'history-item-right';
+    const el = document.createElement('div');
+    el.className = 'history-item ' + sideClass + (canAsk ? ' history-item-askable' : '');
+    el.innerHTML =
+      '<div class="history-item-header">' + escapeHtml(label) + ' – ' + timeStr +
+      (canAsk ? ' <button type="button" class="history-ask-btn" title="Get AI answer">→ Ask</button>' : '') + '</div>' +
+      '<div class="history-item-q">' + escapeHtml(q) + '</div>';
+    if (canAsk) {
+      const btn = el.querySelector('.history-ask-btn');
+      if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); askAiWithQuestion(q); });
+    }
+    historyList.appendChild(el);
+  }
+  if (liveTranscriptBuffer && liveTranscriptBuffer.trim()) {
+    const el = document.createElement('div');
+    el.className = 'history-item history-item-right history-item-live';
+    el.innerHTML =
+      '<div class="history-item-header">Mic – Live</div>' +
+      '<div class="history-item-q">' + escapeHtml(liveTranscriptBuffer) + '<span class="live-cursor">▌</span></div>';
+    historyList.appendChild(el);
+  }
+  if (isSystemAudioCapturing && (systemAudioQuestionBuffer || systemAudioLiveBuffer)) {
+    const combined = (systemAudioQuestionBuffer + (systemAudioLiveBuffer ? ' ' + systemAudioLiveBuffer : '')).trim();
+    if (combined) {
+      const el = document.createElement('div');
+      el.className = 'history-item history-item-left history-item-live history-item-askable';
+      el.innerHTML =
+        '<div class="history-item-header">System – Live <button type="button" class="history-ask-btn" title="Get AI answer now">→ Ask</button></div>' +
+        '<div class="history-item-q">' + escapeHtml(combined) + '<span class="live-cursor">▌</span></div>';
+      const btn = el.querySelector('.history-ask-btn');
+      if (btn) btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (combined.trim()) {
+          systemAudioQuestionBuffer = '';
+          systemAudioLiveBuffer = '';
+          if (systemAudioPauseTimer) { clearTimeout(systemAudioPauseTimer); systemAudioPauseTimer = null; }
+          askAiWithQuestion(combined.trim());
+        }
+      });
+      historyList.appendChild(el);
+    }
+  }
+  // Whenever history updates (new question or audio transcribing), scroll down to show it
+  if (historyList && historyAutoScroll) {
+    const scrollToBottom = () => {
+      historyList.scrollTop = historyList.scrollHeight;
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(scrollToBottom);
+    });
+    setTimeout(scrollToBottom, 50);
+  }
+}
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+function onStreamError(err) {
+  aiBusy = false;
+  aiError.textContent = typeof err === 'string' ? err : (err?.message || 'Request failed');
+  showAiState('error');
+}
+
+function formatTimePM(date) {
+  const h = date.getHours();
+  const m = date.getMinutes();
+  const am = h < 12;
+  const h12 = h % 12 || 12;
+  return h12 + ':' + (m < 10 ? '0' : '') + m + ' ' + (am ? 'AM' : 'PM');
+}
+
+async function askAiWithQuestion(q) {
+  if (!q || aiBusy || !window.floatingAPI?.callAIStream) return;
+  aiBusy = true;
+  aiText.textContent = '';
+  if (aiQuestionText) aiQuestionText.textContent = q;
+  showAiState('loading');
+
+  const handleChunk = (e) => onStreamChunk(e.detail);
+  const handleDone = () => {
+    window.removeEventListener('ai-stream-chunk', handleChunk);
+    window.removeEventListener('ai-stream-done', handleDone);
+    window.removeEventListener('ai-stream-error', handleError);
+    onStreamDone(q);
+  };
+  const handleError = (e) => {
+    window.removeEventListener('ai-stream-chunk', handleChunk);
+    window.removeEventListener('ai-stream-done', handleDone);
+    window.removeEventListener('ai-stream-error', handleError);
+    onStreamError(e.detail);
+  };
+
+  window.addEventListener('ai-stream-chunk', handleChunk);
+  window.addEventListener('ai-stream-done', handleDone);
+  window.addEventListener('ai-stream-error', handleError);
+
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    ...conversationHistory,
+    { role: 'user', content: q },
+  ];
+
+  try {
+    await window.floatingAPI.callAIStream({ messages });
+  } catch (e) {
+    handleError({ detail: e.message || 'Request failed' });
+  }
+}
+
+async function askAi() {
+  const q = (questionInput.value || '').trim();
+  if (!q) return;
+  questionInput.value = '';
+  await askAiWithQuestion(q);
+}
+
+btnAskAi.addEventListener('click', askAi);
+questionInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') askAi();
+});
+
+// Resize only the response block (Answer area): drag the corner to change its height (80–400px).
+const responseResizeCorner = document.getElementById('response-resize-corner');
+const aiResponseWrap = document.getElementById('ai-response-wrap');
+if (responseResizeCorner && aiResponseWrap) {
+  const MIN_H = 80;
+  const MAX_H = 400;
+  const DEFAULT_H = 200;
+  let resizeStart = null;
+
+  // Initial height for the response block only
+  if (!aiResponseWrap.style.height) aiResponseWrap.style.height = DEFAULT_H + 'px';
+
+  function startResize(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const h = aiResponseWrap.offsetHeight || DEFAULT_H;
+    resizeStart = { startY: e.clientY, startH: h };
+    responseResizeCorner.style.cursor = 'nwse-resize';
+  }
+
+  function onMove(e) {
+    if (!resizeStart) return;
+    const dy = e.clientY - resizeStart.startY;
+    const h = Math.round(Math.max(MIN_H, Math.min(MAX_H, resizeStart.startH + dy)));
+    aiResponseWrap.style.height = h + 'px';
+  }
+
+  function onUp() {
+    if (!resizeStart) return;
+    resizeStart = null;
+    responseResizeCorner.style.cursor = 'nwse-resize';
+  }
+
+  responseResizeCorner.addEventListener('mousedown', startResize);
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+// Header clock (e.g. 8:28)
+function updateClock() {
+  const el = document.getElementById('header-clock');
+  if (!el) return;
+  const d = new Date();
+  el.textContent = (d.getHours() % 12 || 12) + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// Set initial footer time
+const footerTimeEl = document.getElementById('ai-answer-time');
+if (footerTimeEl) footerTimeEl.textContent = formatTimePM(new Date());
+
+// Initial state: icon only
+showView('icon');

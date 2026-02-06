@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Answer</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" crossorigin="anonymous" />
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: transparent; }
+    .panel-right-standalone { width: 100%; height: 100%; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur)); border: none; border-radius: 14px; box-shadow: none; outline: none; }
+    .panel-right-standalone .panel-body { padding: 0; }
+  </style>
+</head>
+<body>
+  <div class="panel-right-standalone">
+    <div id="response-area" class="panel-body">
+      <div class="qa-section">
+        <div class="qa-section-header">
+          <span class="qa-label">Answer:</span>
+          <div class="qa-nav" title="Browse previous answers">
+            <button type="button" class="qa-nav-btn" id="btn-prev-answer" title="Previous answer">&lt;</button>
+            <span class="qa-nav-counter" id="answer-counter"></span>
+            <button type="button" class="qa-nav-btn" id="btn-next-answer" title="Next answer">&gt;</button>
+          </div>
+        </div>
+        <div id="ai-response-wrap" class="ai-response-wrap">
+          <div id="ai-response-placeholder" class="ai-response-placeholder"></div>
+          <div id="ai-response-loading" class="ai-response-loading hidden">Thinking…</div>
+          <div id="ai-response-text" class="ai-response-text hidden"></div>
+          <div id="ai-response-error" class="ai-response-error hidden"></div>
+        </div>
+      </div>
+      <div id="response-resize-corner" class="response-resize-corner" title="Drag to resize response panel">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M9 21H3v-6"/><path d="M14 10L3 21"/></svg>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" crossorigin="anonymous"></script>
+  <script src="right.js"></script>
+</body>
+</html>

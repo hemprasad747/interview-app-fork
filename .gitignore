@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+pmodule-app/
+pmodule-extract/
+pmodule-extracted/
+sources/

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en" class="launcher-doc">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AlphaViewAi – Interview Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="launcher-page">
+  <div id="root" class="launcher-root">
+    <div id="view-minimized" class="launcher-minimized-view hidden">
+      <button type="button" id="btn-icon-logo" class="launcher-minimized-btn launcher-minimized-logo hidden" title="Click to restore">
+        <img src="assets/logo.png" alt="AlphaViewAi" class="launcher-minimized-logo-img" />
+      </button>
+      <button type="button" id="btn-icon-wave" class="launcher-minimized-btn" title="Session running – click to expand">
+        <svg class="icon-audio-wave" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <rect class="launcher-wave-bar" x="2" y="8" width="3" height="8" rx="1"/><rect class="launcher-wave-bar" x="6" y="10" width="3" height="4" rx="1"/><rect class="launcher-wave-bar" x="10" y="6" width="3" height="12" rx="1"/><rect class="launcher-wave-bar" x="14" y="10" width="3" height="4" rx="1"/><rect class="launcher-wave-bar" x="18" y="4" width="3" height="16" rx="1"/>
+        </svg>
+      </button>
+    </div>
+    <div id="view-onboarding" class="launcher-onboarding">
+    <header class="launcher-header">
+      <div class="launcher-header-left">
+        <div class="launcher-logo" aria-hidden="true">
+          <img src="assets/logo.png" alt="" class="launcher-logo-img" />
+        </div>
+        <span class="launcher-app-name">AlphaViewAi</span>
+      </div>
+      <div class="launcher-header-right">
+        <button type="button" class="launcher-win-btn" id="btn-minimize" title="Minimize" aria-label="Minimize">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button type="button" class="launcher-win-btn launcher-win-btn-close" id="btn-close" title="Close" aria-label="Close">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div id="step1" class="launcher-step active">
+      <div class="launcher-step-content">
+      <h2>Interview details</h2>
+      <label for="input-company">Interview company</label>
+      <input type="text" id="input-company" placeholder="e.g. Acme Corp" autocomplete="organization" />
+      <label for="input-position">Position</label>
+      <input type="text" id="input-position" placeholder="e.g. Senior Developer" autocomplete="organization-title" />
+      <label for="input-resume">Resume (paste or brief summary)</label>
+      <textarea id="input-resume" placeholder="Paste your resume text or a short summary of your experience…"></textarea>
+      </div>
+      <div class="launcher-footer">
+        <button type="button" class="launcher-btn launcher-btn-primary" id="btn-next">Next</button>
+      </div>
+    </div>
+
+    <div id="step2" class="launcher-step">
+      <div class="launcher-step-content">
+      <h2>Language</h2>
+      <label for="input-language">Select language</label>
+      <select id="input-language">
+        <option value="en-US">English (US)</option>
+        <option value="en-GB">English (UK)</option>
+        <option value="hi-IN">Hindi</option>
+        <option value="es-ES">Spanish</option>
+        <option value="fr-FR">French</option>
+        <option value="de-DE">German</option>
+        <option value="it-IT">Italian</option>
+        <option value="ja-JP">Japanese</option>
+        <option value="ko-KR">Korean</option>
+        <option value="zh-CN">Chinese (Simplified)</option>
+        <option value="pt-BR">Portuguese (Brazil)</option>
+        <option value="ar-SA">Arabic (Saudi Arabia)</option>
+        <option value="nl-NL">Dutch</option>
+        <option value="ru-RU">Russian</option>
+        <option value="tr-TR">Turkish</option>
+      </select>
+      <h2>Instructions to AI</h2>
+      <label for="input-instructions">How to answer and what to answer</label>
+      <textarea id="input-instructions" placeholder="e.g. Be concise. Focus on your relevant experience. Mention specific projects when possible."></textarea>
+      </div>
+      <div class="launcher-footer launcher-footer-row">
+        <button type="button" class="launcher-btn launcher-btn-secondary" id="btn-back">Back</button>
+        <button type="button" class="launcher-btn launcher-btn-primary" id="btn-start-session">Start session</button>
+      </div>
+    </div>
+    </div>
+  </div>
+  <script src="launcher.js"></script>
+</body>
+</html>

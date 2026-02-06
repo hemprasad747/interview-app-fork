@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Interview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://aka.ms/csspeech/jsbrowserpackageraw" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root">
+    <!-- State: icon only -->
+    <div id="view-icon" class="view">
+      <button type="button" id="btn-icon" class="floating-icon" title="Open menu">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+      </button>
+    </div>
+
+    <!-- State: icon + menu -->
+    <div id="view-menu" class="view hidden">
+      <button type="button" id="btn-icon-menu" class="floating-icon" title="Open menu">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+      </button>
+      <div class="floating-menu">
+        <button type="button" id="btn-start-session" class="menu-item">Start Session</button>
+      </div>
+    </div>
+
+    <!-- State: floating app – session bar in its own container + panels -->
+    <div id="view-bar" class="view hidden" data-transparent="true">
+      <div class="session-bar-container" data-no-pass-through="true">
+        <header class="app-header">
+          <button type="button" class="header-btn icon-btn" id="btn-mic" title="Microphone (toggle to record)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+          </button>
+          <button type="button" class="header-btn icon-btn" id="btn-system-audio" title="Capture and transcribe system audio">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+          </button>
+          <span class="header-label">AI Answer</span>
+          <button type="button" class="header-btn" id="btn-analyze-screen" title="Coming soon" style="display: none;">Analyze Screen</button>
+          <button type="button" class="header-btn bar-btn" id="btn-end-session">End Session</button>
+          <span class="header-spacer"></span>
+          <span id="bar-timer" class="header-timer">0:00</span>
+          <span id="header-clock" class="header-clock">8:28</span>
+          <button type="button" class="header-btn collapse-btn" id="btn-collapse" title="Collapse to mic">⌃</button>
+        </header>
+      </div>
+      <div class="floating-panels">
+        <div id="history-area" class="panel panel-left" data-no-pass-through="true">
+          <div class="panel-header">
+            <button type="button" class="panel-header-btn" id="btn-clear-history" title="Delete all">🗑</button>
+          </div>
+          <div id="history-list" class="panel-content history-list"></div>
+        </div>
+        <div id="response-panel" class="panel panel-right" data-no-pass-through="true">
+          <div class="panel-header panel-header-qa">
+            <input type="text" id="question-input" class="question-tube" autocomplete="off" placeholder="Ask a question…" />
+            <button type="button" id="btn-ask-ai" class="ask-ai-btn" title="Send">Send</button>
+          </div>
+          <div id="response-area" class="panel-body">
+            <div class="qa-section">
+              <div class="qa-label">Answer:</div>
+              <div id="ai-response-wrap" class="ai-response-wrap">
+                <div id="ai-response-placeholder" class="ai-response-placeholder"></div>
+                <div id="ai-response-loading" class="ai-response-loading hidden">Thinking…</div>
+                <div id="ai-response-text" class="ai-response-text hidden"></div>
+                <div id="ai-response-error" class="ai-response-error hidden"></div>
+              </div>
+            </div>
+            <div id="ai-answer-footer" class="ai-answer-footer">AI Answer (auto) – <span id="ai-answer-time">06:56 PM</span></div>
+            <div id="response-resize-corner" class="response-resize-corner" title="Drag to resize">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M9 21H3v-6"/><path d="M14 10L3 21"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
