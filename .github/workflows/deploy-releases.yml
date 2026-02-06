@@ -7,7 +7,7 @@ on:
       - main
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -33,12 +33,29 @@ jobs:
           Copy-Item "dist/Interview App Setup*.exe" deploy/
           Get-ChildItem deploy
 
-      - name: Deploy to Hostinger via FTP
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+      - name: Upload release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: deploy/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release files
+        uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: deploy
+
+      - name: Deploy to Hostinger via SFTP
+        uses: wlixcc/SFTP-Deploy-Action@v1.2.4
         with:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          local-dir: ./deploy/
-          server-dir: ./public_html/releases/
-          dangerous-clean-slate: false
+          port: 65002
+          sftp_only: true
+          local_path: './deploy/*'
+          remote_path: 'public_html/releases/'
