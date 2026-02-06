@@ -22,10 +22,12 @@ jobs:
         run: npm ci
 
       - name: Build Windows installer
-        run: npm run dist
+        run: npm run dist -- --win
         env:
           # Skip code signing (not needed on Linux runner)
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # Don't publish to GitHub/Snap - we deploy via FTP
+          GH_TOKEN: ''
 
       - name: Prepare release files
         run: |
