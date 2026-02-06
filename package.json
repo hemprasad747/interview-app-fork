@@ -26,7 +26,7 @@
   "build": {
     "appId": "com.interview.app",
     "productName": "Interview App",
-    "publish": null,
+    "publish": {"provider": "generic", "url": "https://alphaviewai.com/releases/"},
     "win": {
       "target": "nsis", "signAndEditExecutable": false
     }
