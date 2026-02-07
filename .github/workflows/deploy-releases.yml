@@ -50,12 +50,14 @@ jobs:
           name: release-files
           path: deploy
 
-      - name: Deploy to Hostinger via FTP
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+      - name: Deploy to Hostinger via SFTP
+        uses: wlixcc/SFTP-Deploy-Action@v1.2.6
         with:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          local-dir: ./deploy/
-          server-dir: /domains/alphaviewai.com/public_html/releases/
-          timeout: 600000
+          port: 65002
+          local_path: './deploy/*'
+          remote_path: 'domains/alphaviewai.com/public_html/releases/'
+          sftp_only: true
+          sftpArgs: '-o ConnectTimeout=60 -o StrictHostKeyChecking=no'
