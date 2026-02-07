@@ -89,6 +89,7 @@ function showStep(step) {
   if (step1) step1.classList.toggle('active', step === 1);
   if (step2) step2.classList.toggle('active', step === 2);
   if (step3) step3.classList.toggle('active', step === 3);
+  if (step === 3) updateStartSessionButton();
   if (window.floatingAPI?.launcherSetStepSize) window.floatingAPI.launcherSetStepSize(step);
 }
 
@@ -110,11 +111,29 @@ if (btnClose && window.floatingAPI?.windowClose) {
   btnClose.addEventListener('click', () => window.floatingAPI.windowClose());
 }
 
+const FULL_CREDITS_MIN_REQUIRED = 1;
+let userCreditsMinutes = 0;
+
+function updateStartSessionButton() {
+  if (!btnStartSession) return;
+  const sessionTypeRadio = document.querySelector('input[name="session-type"]:checked');
+  const isFull = sessionTypeRadio?.value === 'full';
+  const canStart = isFull ? userCreditsMinutes >= FULL_CREDITS_MIN_REQUIRED : true;
+  btnStartSession.disabled = !canStart;
+  btnStartSession.title = isFull && !canStart ? 'Full interview requires at least 1 min of credits' : '';
+}
+
+if (document.querySelectorAll('input[name="session-type"]').length) {
+  document.querySelectorAll('input[name="session-type"]').forEach((r) => {
+    r.addEventListener('change', updateStartSessionButton);
+  });
+}
+
 btnStartSession.addEventListener('click', () => {
-  if (!window.floatingAPI?.startSession) return;
+  if (!window.floatingAPI?.startSession || btnStartSession.disabled) return;
   const sessionTypeRadio = document.querySelector('input[name="session-type"]:checked');
   const sessionType = sessionTypeRadio?.value === 'full' ? 'full' : 'free';
-  const creditsMinutes = sessionType === 'free' ? 10 : 0;
+  const creditsMinutes = sessionType === 'free' ? 10 : Math.max(0, userCreditsMinutes);
   const config = {
     company: (inputCompany && inputCompany.value) ? inputCompany.value.trim() : '',
     position: (inputPosition && inputPosition.value) ? inputPosition.value.trim() : '',
