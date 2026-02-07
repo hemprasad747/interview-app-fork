@@ -1078,6 +1078,7 @@ app.whenReady().then(() => {
     });
     autoUpdater.on('update-downloaded', () => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-downloaded');
+      setTimeout(() => { autoUpdater.quitAndInstall(); }, 3000);
     });
     autoUpdater.on('error', (err) => {
       console.error('Updater error', err);

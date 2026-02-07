@@ -1244,9 +1244,10 @@ html.launcher-doc.launcher-window-minimized,
 }
 
 .launcher-update-banner {
-  position: fixed; bottom: 0; left: 0; right: 0;
+  flex-shrink: 0;
   padding: 8px 16px; background: rgba(59,130,246,0.2); border-top: 1px solid var(--launcher-accent);
   display: flex; align-items: center; justify-content: center; gap: 12px; font-size: 12px;
+  order: 999;
 }
 .launcher-update-banner.hidden { display: none !important; }
 .launcher-update-restart { flex-shrink: 0; }

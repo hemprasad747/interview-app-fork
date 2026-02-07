@@ -219,7 +219,7 @@ if (window.floatingAPI?.onUpdateAvailable) {
   window.floatingAPI.onUpdateAvailable((version) => showUpdateBanner(`Update ${version || ''} available – downloading…`, false));
 }
 if (window.floatingAPI?.onUpdateDownloaded) {
-  window.floatingAPI.onUpdateDownloaded(() => showUpdateBanner('Update ready – restart to install', true));
+  window.floatingAPI.onUpdateDownloaded(() => showUpdateBanner('Update ready – restarting in 3 seconds…', false));
 }
 if (btnRestartForUpdate && window.floatingAPI?.quitAndInstall) {
   btnRestartForUpdate.addEventListener('click', () => window.floatingAPI.quitAndInstall());
