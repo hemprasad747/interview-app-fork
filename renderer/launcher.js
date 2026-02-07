@@ -26,6 +26,10 @@ const btnBack1 = document.getElementById('btn-back-1');
 const btnBack2 = document.getElementById('btn-back-2');
 const btnBack3 = document.getElementById('btn-back-3');
 const btnNextToSessionType = document.getElementById('btn-next-to-session-type');
+const btnCheckUpdates = document.getElementById('btn-check-updates');
+const updateBanner = document.getElementById('update-banner');
+const updateBannerText = document.getElementById('update-banner-text');
+const btnRestartForUpdate = document.getElementById('btn-restart-for-update');
 
 let currentStep = 0;
 let sessionMinimized = false;
@@ -197,6 +201,32 @@ if (window.floatingAPI?.onWaveLevels) {
       const scale = LAUNCHER_WAVE_MIN + level * (LAUNCHER_WAVE_MAX - LAUNCHER_WAVE_MIN);
       bars[i].style.transform = `scaleY(${scale})`;
     }
+  });
+}
+
+function showUpdateBanner(text, showRestart) {
+  if (!updateBanner || !updateBannerText) return;
+  updateBannerText.textContent = text;
+  if (btnRestartForUpdate) btnRestartForUpdate.classList.toggle('hidden', !showRestart);
+  updateBanner.classList.remove('hidden');
+}
+
+if (window.floatingAPI?.onUpdateAvailable) {
+  window.floatingAPI.onUpdateAvailable((version) => showUpdateBanner(`Update ${version || ''} available – downloading…`, false));
+}
+if (window.floatingAPI?.onUpdateDownloaded) {
+  window.floatingAPI.onUpdateDownloaded(() => showUpdateBanner('Update ready – restart to install', true));
+}
+if (btnRestartForUpdate && window.floatingAPI?.quitAndInstall) {
+  btnRestartForUpdate.addEventListener('click', () => window.floatingAPI.quitAndInstall());
+}
+if (btnCheckUpdates && window.floatingAPI?.checkForUpdates) {
+  btnCheckUpdates.addEventListener('click', async () => {
+    btnCheckUpdates.disabled = true;
+    try {
+      await window.floatingAPI.checkForUpdates();
+    } catch (_) {}
+    btnCheckUpdates.disabled = false;
   });
 }
 

@@ -68,4 +68,9 @@ contextBridge.exposeInMainWorld('floatingAPI', {
   getAuthData: () => ipcRenderer.invoke('get-auth-data'),
   signOutAuth: () => ipcRenderer.invoke('sign-out-auth'),
   onAuthTokenReceived: (cb) => ipcRenderer.on('auth-token-received', (_e, data) => cb(data)),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  onUpdateAvailable: (cb) => ipcRenderer.on('update-available', (_e, version) => cb(version)),
+  onUpdateDownloaded: (cb) => ipcRenderer.on('update-downloaded', () => cb()),
+  onUpdateError: (cb) => ipcRenderer.on('update-error', (_e, msg) => cb(msg)),
+  quitAndInstall: () => ipcRenderer.invoke('quit-and-install'),
 });

@@ -984,6 +984,21 @@ ipcMain.handle('open-auth-url', () => shell.openExternal(AUTH_CALLBACK_URL));
 ipcMain.handle('get-auth-data', () => getAuthData());
 ipcMain.handle('sign-out-auth', () => { setAuthData(null); });
 
+ipcMain.handle('check-for-updates', () => {
+  if (process.platform === 'win32' && app.isPackaged) {
+    return autoUpdater.checkForUpdates().catch((e) => { console.error('Update check failed', e); throw e; });
+  }
+  return Promise.resolve(null);
+});
+
+ipcMain.handle('quit-and-install', () => {
+  if (process.platform === 'win32' && app.isPackaged) {
+    autoUpdater.quitAndInstall(false, true);
+  } else {
+    app.quit();
+  }
+});
+
 ipcMain.handle('get-window-bounds', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return null;
   return mainWindow.getBounds();
@@ -1057,10 +1072,18 @@ app.whenReady().then(() => {
   if (process.platform === 'win32' && app.isPackaged) {
     autoUpdater.setFeedURL({ provider: 'generic', url: 'https://alphaviewai.com/releases/' });
     autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.on('update-available', () => {});
-    autoUpdater.on('update-downloaded', () => {});
-    autoUpdater.on('error', (err) => console.error('Updater error', err));
-    autoUpdater.checkForUpdates().catch(() => {});
+    autoUpdater.autoDownload = true;
+    autoUpdater.on('update-available', (info) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-available', info?.version);
+    });
+    autoUpdater.on('update-downloaded', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-downloaded');
+    });
+    autoUpdater.on('error', (err) => {
+      console.error('Updater error', err);
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-error', err?.message || 'Check failed');
+    });
+    autoUpdater.checkForUpdates().catch((e) => console.error('Update check failed', e));
   }
 });
 

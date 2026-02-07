@@ -30,6 +30,7 @@
         <span class="launcher-app-name">AlphaViewAi</span>
       </div>
       <div class="launcher-header-right">
+        <button type="button" class="launcher-btn-link launcher-check-updates" id="btn-check-updates" title="Check for updates">Update</button>
         <button type="button" class="launcher-win-btn" id="btn-minimize" title="Minimize" aria-label="Minimize">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
@@ -136,6 +137,10 @@
         <button type="button" class="launcher-btn launcher-btn-primary" id="btn-start-session">Start session</button>
       </div>
     </div>
+    </div>
+    <div id="update-banner" class="launcher-update-banner hidden">
+      <span id="update-banner-text"></span>
+      <button type="button" class="launcher-btn-link launcher-update-restart" id="btn-restart-for-update">Restart to install</button>
     </div>
   </div>
   <script src="launcher.js"></script>
