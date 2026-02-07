@@ -31,6 +31,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path deploy
           Copy-Item dist/latest.yml deploy/
           Copy-Item "dist/Interview App Setup*.exe" deploy/
+          Copy-Item "dist/Interview App Setup*.exe.blockmap" deploy/ -ErrorAction SilentlyContinue
           Get-ChildItem deploy
 
       - name: Upload release files
@@ -56,5 +57,5 @@ jobs:
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
           local-dir: ./deploy/
-          server-dir: /domains/alphaviewai.com/public_html/releases/
+          server-dir: domains/alphaviewai.com/public_html/releases/
           timeout: 600000
