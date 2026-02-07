@@ -56,5 +56,5 @@ jobs:
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
           local-dir: ./deploy/
-          server-dir: ./public_html/releases/
-          timeout: 300000
+          server-dir: /domains/alphaviewai.com/public_html/releases/
+          timeout: 600000
