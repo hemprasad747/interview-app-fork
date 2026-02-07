@@ -9,7 +9,7 @@ const fs = require('fs');
 
 // Use a writable userData path to avoid "Access is denied" cache errors on Windows
 // (e.g. when running from OneDrive, restricted, or elevated folders)
-app.setPath('userData', path.join(app.getPath('appData'), 'Interview App'));
+app.setPath('userData', path.join(app.getPath('appData'), 'AlphaViewAI'));
 const https = require('https');
 
 /** Auth token storage - links desktop app to web user */
@@ -89,10 +89,14 @@ const LAUNCHER_SIZE = 52;
 const LAUNCHER_MARGIN = 10;
 const ONBOARDING_WIDTH = 360;
 const ONBOARDING_HEIGHT = 420;
+const STEP0_WIDTH = 360;
+const STEP0_HEIGHT = 360;
 const STEP1_WIDTH = 360;
 const STEP1_HEIGHT = 400;
 const STEP2_WIDTH = 380;
 const STEP2_HEIGHT = 520;
+const STEP3_WIDTH = 380;
+const STEP3_HEIGHT = 420;
 
 function centerTopPosition(width, height) {
   const { workArea } = screen.getPrimaryDisplay();
@@ -1024,8 +1028,8 @@ ipcMain.handle('launcher-restore-from-icon', () => {
 
 ipcMain.handle('launcher-set-step-size', (_event, step) => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  const w = step === 2 ? STEP2_WIDTH : STEP1_WIDTH;
-  const h = step === 2 ? STEP2_HEIGHT : STEP1_HEIGHT;
+  const sizes = { 0: [STEP0_WIDTH, STEP0_HEIGHT], 1: [STEP1_WIDTH, STEP1_HEIGHT], 2: [STEP2_WIDTH, STEP2_HEIGHT], 3: [STEP3_WIDTH, STEP3_HEIGHT] };
+  const [w, h] = sizes[step] || sizes[1];
   mainWindow.setMinimumSize(w, h);
   mainWindow.setBounds(centerTopPosition(w, h));
 });
@@ -1042,7 +1046,10 @@ if (!gotTheLock) {
 }
 
 app.whenReady().then(() => {
-  app.setAsDefaultProtocolClient('alphaviewai');
+  // Only register protocol when packaged - dev mode would overwrite with electron.exe and break protocol links
+  if (app.isPackaged) {
+    app.setAsDefaultProtocolClient('alphaviewai');
+  }
   createWindow();
   // Handle protocol URL when app is launched via alphaviewai:// (e.g. from browser redirect)
   const cmd = process.argv.find((a) => typeof a === 'string' && a.startsWith('alphaviewai://'));

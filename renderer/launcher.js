@@ -1,7 +1,9 @@
 const viewOnboarding = document.getElementById('view-onboarding');
 const viewMinimized = document.getElementById('view-minimized');
+const step0 = document.getElementById('step0');
 const step1 = document.getElementById('step1');
 const step2 = document.getElementById('step2');
+const step3 = document.getElementById('step3');
 const inputCompany = document.getElementById('input-company');
 const inputPosition = document.getElementById('input-position');
 const inputResume = document.getElementById('input-resume');
@@ -19,7 +21,13 @@ const authSignedIn = document.getElementById('auth-signed-in');
 const authEmail = document.getElementById('auth-email');
 const btnSignin = document.getElementById('btn-signin');
 const btnSignout = document.getElementById('btn-signout');
+const btnNextFromLogin = document.getElementById('btn-next-from-login');
+const btnBack1 = document.getElementById('btn-back-1');
+const btnBack2 = document.getElementById('btn-back-2');
+const btnBack3 = document.getElementById('btn-back-3');
+const btnNextToSessionType = document.getElementById('btn-next-to-session-type');
 
+let currentStep = 0;
 let sessionMinimized = false;
 let windowMinimized = false;
 let suppressClick = false;
@@ -29,6 +37,7 @@ function updateAuthUI(data) {
   if (authSignedOut) authSignedOut.classList.toggle('hidden', signedIn);
   if (authSignedIn) authSignedIn.classList.toggle('hidden', !signedIn);
   if (authEmail) authEmail.textContent = data?.email || 'Signed in';
+  if (btnNextFromLogin) btnNextFromLogin.disabled = !signedIn;
 }
 
 async function initAuth() {
@@ -59,7 +68,7 @@ function showOnboarding() {
   if (document.documentElement) document.documentElement.classList.remove('launcher-window-minimized');
   const root = document.getElementById('root');
   if (root) root.classList.remove('launcher-window-minimized');
-  showStep(1);
+  showStep(0);
 }
 
 function showMinimized() {
@@ -75,18 +84,20 @@ function showMinimized() {
 }
 
 function showStep(step) {
+  currentStep = step;
+  if (step0) step0.classList.toggle('active', step === 0);
   if (step1) step1.classList.toggle('active', step === 1);
   if (step2) step2.classList.toggle('active', step === 2);
+  if (step3) step3.classList.toggle('active', step === 3);
   if (window.floatingAPI?.launcherSetStepSize) window.floatingAPI.launcherSetStepSize(step);
 }
 
-btnNext.addEventListener('click', () => {
-  showStep(2);
-});
-
-btnBack.addEventListener('click', () => {
-  showStep(1);
-});
+if (btnNextFromLogin) btnNextFromLogin.addEventListener('click', () => showStep(1));
+if (btnNext) btnNext.addEventListener('click', () => showStep(2));
+if (btnNextToSessionType) btnNextToSessionType.addEventListener('click', () => showStep(3));
+if (btnBack1) btnBack1.addEventListener('click', () => showStep(0));
+if (btnBack2) btnBack2.addEventListener('click', () => showStep(1));
+if (btnBack3) btnBack3.addEventListener('click', () => showStep(2));
 
 if (btnMinimize && window.floatingAPI?.launcherMinimizeToIcon) {
   btnMinimize.addEventListener('click', async () => {
@@ -101,12 +112,17 @@ if (btnClose && window.floatingAPI?.windowClose) {
 
 btnStartSession.addEventListener('click', () => {
   if (!window.floatingAPI?.startSession) return;
+  const sessionTypeRadio = document.querySelector('input[name="session-type"]:checked');
+  const sessionType = sessionTypeRadio?.value === 'full' ? 'full' : 'free';
+  const creditsMinutes = sessionType === 'free' ? 10 : 0;
   const config = {
     company: (inputCompany && inputCompany.value) ? inputCompany.value.trim() : '',
     position: (inputPosition && inputPosition.value) ? inputPosition.value.trim() : '',
     resume: (inputResume && inputResume.value) ? inputResume.value.trim() : '',
     language: (inputLanguage && inputLanguage.value) ? inputLanguage.value : 'en-US',
     instructions: (inputInstructions && inputInstructions.value) ? inputInstructions.value.trim() : '',
+    sessionType,
+    creditsMinutes,
   };
   window.floatingAPI.startSession(config);
 });
@@ -166,4 +182,5 @@ if (window.floatingAPI?.onWaveLevels) {
 }
 
 showOnboarding();
+showStep(0);
 initAuth();

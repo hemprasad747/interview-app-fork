@@ -393,6 +393,18 @@ html, body {
 .header-btn-end-with-timer .header-timer {
   font-variant-numeric: tabular-nums;
 }
+.header-credit {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: rgba(255,255,255,0.8);
+  margin-left: 4px;
+}
+.header-credit.credits-disabled {
+  color: rgba(255,255,255,0.5);
+}
+.header-credit.credit-low {
+  color: #f59e0b;
+}
 
 .collapse-btn {
   font-size: 16px;
@@ -1230,6 +1242,25 @@ html.launcher-doc.launcher-window-minimized,
 .launcher-sign-out:hover {
   text-decoration: underline;
 }
+
+.launcher-login-step { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.launcher-login-subtitle { color: var(--text-muted); font-size: 13px; margin-bottom: 20px; }
+
+.launcher-session-type-options { display: flex; flex-direction: column; gap: 12px; }
+.launcher-session-type-option input[type="radio"] { display: none; }
+.launcher-session-type-option {
+  display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: var(--launcher-radius);
+  background: rgba(255,255,255,0.04); border: 1px solid var(--launcher-border); cursor: pointer;
+}
+.launcher-session-type-option:has(input:checked) { border-color: var(--launcher-accent); background: rgba(59,130,246,0.1); }
+.launcher-session-type-label { font-weight: 600; font-size: 13px; }
+.launcher-session-type-desc { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+.launcher-credits-badge {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px;
+  background: rgba(255,255,255,0.08); color: var(--text-muted); opacity: 0.7; cursor: not-allowed;
+}
+.launcher-credits-badge svg { flex-shrink: 0; }
+.launcher-session-type-subtitle { color: var(--text-muted); font-size: 12px; margin-bottom: 12px; }
 
 .launcher-minimized-view {
   position: absolute;

@@ -30,8 +30,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path deploy
           Copy-Item dist/latest.yml deploy/
-          Copy-Item "dist/Interview App Setup*.exe" deploy/
-          Copy-Item "dist/Interview App Setup*.exe.blockmap" deploy/ -ErrorAction SilentlyContinue
+          Copy-Item "dist/AlphaViewAI Setup*.exe" deploy/
+          Copy-Item "dist/AlphaViewAI Setup*.exe.blockmap" deploy/ -ErrorAction SilentlyContinue
           Get-ChildItem deploy
 
       - name: Upload release files

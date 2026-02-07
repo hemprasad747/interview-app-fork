@@ -9,6 +9,7 @@ const btnPosition = document.getElementById('btn-position');
 const btnCollapse = document.getElementById('btn-collapse');
 const btnTranscribe = document.getElementById('btn-transcribe');
 const barTimer = document.getElementById('bar-timer');
+const barCredit = document.getElementById('bar-credit');
 const sessionBarContainer = document.getElementById('session-bar-container');
 const barWaveIndicator = document.getElementById('bar-wave-indicator');
 
@@ -563,12 +564,55 @@ if (window.floatingAPI?.onHistoryVisibleChanged) {
   window.floatingAPI.onHistoryVisibleChanged(setTranscribeButtonState);
 }
 
+let sessionType = 'free';
+let creditsMinutes = 10;
+let freeSessionEnded = false;
+
+function updateCreditDisplay(seconds) {
+  if (!barCredit) return;
+  if (sessionType === 'free') {
+    const totalSec = creditsMinutes * 60;
+    const remaining = Math.max(0, totalSec - seconds);
+    const rm = Math.floor(remaining / 60);
+    const rs = remaining % 60;
+    barCredit.textContent = rm + ':' + (rs < 10 ? '0' : '') + rs + ' left';
+    barCredit.title = remaining <= 60 ? 'Almost out – session will end soon' : 'Available time';
+    barCredit.classList.remove('credits-disabled');
+    barCredit.classList.toggle('credit-low', remaining > 0 && remaining <= 60);
+  } else {
+    barCredit.textContent = '0 min';
+    barCredit.title = 'Credits (coming soon)';
+    barCredit.classList.add('credits-disabled');
+  }
+}
+
+if (window.floatingAPI?.getSessionConfig) {
+  window.floatingAPI.getSessionConfig().then((cfg) => {
+    if (cfg) {
+      sessionType = cfg.sessionType || 'free';
+      creditsMinutes = Math.max(0, Number(cfg.creditsMinutes) || (sessionType === 'free' ? 10 : 0));
+    }
+    if (window.floatingAPI?.getTimer) {
+      window.floatingAPI.getTimer().then(updateCreditDisplay);
+    }
+  });
+}
+
 if (window.floatingAPI?.onTimerTick) {
   window.floatingAPI.onTimerTick((seconds) => {
-    if (!barTimer) return;
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    barTimer.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+    if (barTimer) {
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      barTimer.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+    }
+    updateCreditDisplay(seconds);
+    if (sessionType === 'free' && !freeSessionEnded) {
+      const remaining = Math.max(0, creditsMinutes * 60 - seconds);
+      if (remaining <= 0) {
+        freeSessionEnded = true;
+        if (window.floatingAPI?.endSession) window.floatingAPI.endSession();
+      }
+    }
   });
 }
 
