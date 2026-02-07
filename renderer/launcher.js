@@ -36,18 +36,21 @@ let sessionMinimized = false;
 let windowMinimized = false;
 let suppressClick = false;
 
-function updateAuthUI(data) {
+function updateAuthUI(data, skipToStep1) {
   const signedIn = !!data?.email || !!data?.token;
   if (authSignedOut) authSignedOut.classList.toggle('hidden', signedIn);
   if (authSignedIn) authSignedIn.classList.toggle('hidden', !signedIn);
   if (authEmail) authEmail.textContent = data?.email || 'Signed in';
   if (btnNextFromLogin) btnNextFromLogin.disabled = !signedIn;
+  if (signedIn && skipToStep1) showStep(1);
 }
 
 async function initAuth() {
   try {
     const data = await window.floatingAPI?.getAuthData?.();
-    if (data?.email || data?.token) updateAuthUI(data);
+    if (data?.email || data?.token) {
+      updateAuthUI(data, true);
+    }
   } catch (_) {}
 }
 
@@ -57,11 +60,12 @@ if (btnSignin && window.floatingAPI?.openAuthUrl) {
 if (btnSignout && window.floatingAPI?.signOutAuth) {
   btnSignout.addEventListener('click', async () => {
     await window.floatingAPI.signOutAuth();
-    updateAuthUI(null);
+    updateAuthUI(null, false);
+    showStep(0);
   });
 }
 if (window.floatingAPI?.onAuthTokenReceived) {
-  window.floatingAPI.onAuthTokenReceived((data) => updateAuthUI(data));
+  window.floatingAPI.onAuthTokenReceived((data) => updateAuthUI(data, true));
 }
 
 function showOnboarding() {
