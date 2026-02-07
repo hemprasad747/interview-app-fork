@@ -64,4 +64,8 @@ contextBridge.exposeInMainWorld('floatingAPI', {
   launcherMinimizeToIcon: () => ipcRenderer.invoke('launcher-minimize-to-icon'),
   launcherRestoreFromIcon: () => ipcRenderer.invoke('launcher-restore-from-icon'),
   launcherSetStepSize: (step) => ipcRenderer.invoke('launcher-set-step-size', step),
+  openAuthUrl: () => ipcRenderer.invoke('open-auth-url'),
+  getAuthData: () => ipcRenderer.invoke('get-auth-data'),
+  signOutAuth: () => ipcRenderer.invoke('sign-out-auth'),
+  onAuthTokenReceived: (cb) => ipcRenderer.on('auth-token-received', (_e, data) => cb(data)),
 });

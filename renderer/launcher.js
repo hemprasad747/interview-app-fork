@@ -14,10 +14,42 @@ const btnIconWave = document.getElementById('btn-icon-wave');
 const btnIconLogo = document.getElementById('btn-icon-logo');
 const btnMinimize = document.getElementById('btn-minimize');
 const btnClose = document.getElementById('btn-close');
+const authSignedOut = document.getElementById('auth-signed-out');
+const authSignedIn = document.getElementById('auth-signed-in');
+const authEmail = document.getElementById('auth-email');
+const btnSignin = document.getElementById('btn-signin');
+const btnSignout = document.getElementById('btn-signout');
 
 let sessionMinimized = false;
 let windowMinimized = false;
 let suppressClick = false;
+
+function updateAuthUI(data) {
+  const signedIn = !!data?.email || !!data?.token;
+  if (authSignedOut) authSignedOut.classList.toggle('hidden', signedIn);
+  if (authSignedIn) authSignedIn.classList.toggle('hidden', !signedIn);
+  if (authEmail) authEmail.textContent = data?.email || 'Signed in';
+}
+
+async function initAuth() {
+  try {
+    const data = await window.floatingAPI?.getAuthData?.();
+    if (data?.email || data?.token) updateAuthUI(data);
+  } catch (_) {}
+}
+
+if (btnSignin && window.floatingAPI?.openAuthUrl) {
+  btnSignin.addEventListener('click', () => window.floatingAPI.openAuthUrl());
+}
+if (btnSignout && window.floatingAPI?.signOutAuth) {
+  btnSignout.addEventListener('click', async () => {
+    await window.floatingAPI.signOutAuth();
+    updateAuthUI(null);
+  });
+}
+if (window.floatingAPI?.onAuthTokenReceived) {
+  window.floatingAPI.onAuthTokenReceived((data) => updateAuthUI(data));
+}
 
 function showOnboarding() {
   windowMinimized = false;
@@ -134,3 +166,4 @@ if (window.floatingAPI?.onWaveLevels) {
 }
 
 showOnboarding();
+initAuth();

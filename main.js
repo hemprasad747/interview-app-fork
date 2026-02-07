@@ -1,12 +1,53 @@
 require('dotenv').config();
-const { app, BrowserWindow, ipcMain, screen, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell } = require('electron');
+/** Backend proxy URL - keeps Azure keys server-side. Set API_BASE_URL in env to override. */
+const API_BASE = process.env.API_BASE_URL || 'https://us-central1-alphaviewai-d7f9d.cloudfunctions.net';
+const AUTH_CALLBACK_URL = 'https://alphaviewai.com/auth-callback.html?desktop=1';
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
+const fs = require('fs');
 
 // Use a writable userData path to avoid "Access is denied" cache errors on Windows
 // (e.g. when running from OneDrive, restricted, or elevated folders)
 app.setPath('userData', path.join(app.getPath('appData'), 'Interview App'));
 const https = require('https');
+
+/** Auth token storage - links desktop app to web user */
+const AUTH_FILE = path.join(app.getPath('userData'), 'auth.json');
+
+function getAuthData() {
+  try {
+    const raw = fs.readFileSync(AUTH_FILE, 'utf8');
+    return JSON.parse(raw);
+  } catch (_) { return null; }
+}
+
+function setAuthData(data) {
+  try {
+    fs.writeFileSync(AUTH_FILE, JSON.stringify(data || {}), 'utf8');
+  } catch (e) { console.error('Auth save error', e); }
+}
+
+function parseProtocolUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'alphaviewai:') return null;
+    const token = u.searchParams.get('token');
+    const email = u.searchParams.get('email');
+    if (token) return { token, email: email || '' };
+  } catch (_) {}
+  return null;
+}
+
+function handleAuthUrl(url) {
+  const data = parseProtocolUrl(url);
+  if (!data) return;
+  setAuthData({ token: data.token, email: data.email });
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('auth-token-received', data);
+  }
+}
 const FormData = require('form-data');
 
 let mainWindow; // Launcher (icon/menu only)
@@ -916,15 +957,28 @@ ipcMain.handle('get-screen-bounds', () => {
   return workArea;
 });
 
-ipcMain.handle('get-azure-speech-config', () => {
+ipcMain.handle('get-azure-speech-config', async () => {
+  const language = (sessionConfig.language || 'en-US').trim() || 'en-US';
+  // Try backend proxy first (returns { token, region, language }) - no keys in app
+  try {
+    const res = await fetch(`${API_BASE}/speechToken?language=${encodeURIComponent(language)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.token && data.region) return { token: data.token, region: data.region, language: data.language || language };
+    }
+  } catch (_) {}
+  // Fallback: local env (for dev only - keys in .env)
   const key = process.env.AZURE_SPEECH_KEY;
   const region = process.env.AZURE_SPEECH_REGION || 'eastus';
-  if (!key || !region) return null;
-  const language = (sessionConfig.language || 'en-US').trim() || 'en-US';
-  return { key, region, language };
+  if (key && region) return { key, region, language };
+  return null;
 });
 
 ipcMain.handle('get-session-config', () => sessionConfig);
+
+ipcMain.handle('open-auth-url', () => shell.openExternal(AUTH_CALLBACK_URL));
+ipcMain.handle('get-auth-data', () => getAuthData());
+ipcMain.handle('sign-out-auth', () => { setAuthData(null); });
 
 ipcMain.handle('get-window-bounds', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return null;
@@ -976,8 +1030,23 @@ ipcMain.handle('launcher-set-step-size', (_event, step) => {
   mainWindow.setBounds(centerTopPosition(w, h));
 });
 
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => {
+    if (mainWindow) mainWindow.focus();
+    const url = argv.find((a) => typeof a === 'string' && a.startsWith('alphaviewai://'));
+    if (url) handleAuthUrl(url);
+  });
+}
+
 app.whenReady().then(() => {
+  app.setAsDefaultProtocolClient('alphaviewai');
   createWindow();
+  // Handle protocol URL when app is launched via alphaviewai:// (e.g. from browser redirect)
+  const cmd = process.argv.find((a) => typeof a === 'string' && a.startsWith('alphaviewai://'));
+  if (cmd) handleAuthUrl(cmd);
   if (process.platform === 'win32' && app.isPackaged) {
     autoUpdater.setFeedURL({ provider: 'generic', url: 'https://alphaviewai.com/releases/' });
     autoUpdater.autoInstallOnAppQuit = true;
@@ -987,6 +1056,9 @@ app.whenReady().then(() => {
     autoUpdater.checkForUpdates().catch(() => {});
   }
 });
+
+app.on('open-url', (_event, url) => { handleAuthUrl(url); });
+
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 
@@ -1000,6 +1072,27 @@ function getAzureOpenAIConfig() {
 
 // AI: non-streaming (fallback)
 ipcMain.handle('call-ai', async (_event, { transcript, systemPrompt }) => {
+  const body = {
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: transcript },
+    ],
+    max_tokens: 160,
+    temperature: 0.2,
+    top_p: 1,
+  };
+  // Try backend proxy first
+  try {
+    const res = await fetch(`${API_BASE}/openaiChat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.error) return { error: data.error.message };
+    if (data.choices?.[0]?.message?.content) return { text: data.choices[0].message.content };
+  } catch (e) { /* fallback */ }
+  // Fallback: local env
   const cfg = getAzureOpenAIConfig();
   if (!cfg) return { error: 'AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT required.' };
   try {
@@ -1007,15 +1100,7 @@ ipcMain.handle('call-ai', async (_event, { transcript, systemPrompt }) => {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': cfg.apiKey },
-      body: JSON.stringify({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: transcript },
-        ],
-        max_tokens: 160,
-        temperature: 0.2,
-        top_p: 1,
-      }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (data.error) return { error: data.error.message };
@@ -1027,14 +1112,59 @@ ipcMain.handle('call-ai', async (_event, { transcript, systemPrompt }) => {
 
 // AI: streaming with full conversation context (Azure OpenAI)
 ipcMain.handle('call-ai-stream', async (event, { messages }) => {
-  const cfg = getAzureOpenAIConfig();
   const sender = event.sender;
-  if (!cfg) {
-    sender.send('ai-stream-error', 'AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT required.');
-    return;
-  }
   if (!Array.isArray(messages) || messages.length === 0) {
     sender.send('ai-stream-error', 'Messages required.');
+    return;
+  }
+  const body = { messages, max_tokens: 160, temperature: 0.2, top_p: 1 };
+  // Try backend proxy first
+  try {
+    const res = await fetch(`${API_BASE}/openaiChatStream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok && res.body) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') { sender.send('ai-stream-done'); return; }
+            try {
+              const obj = JSON.parse(data);
+              const content = obj.choices?.[0]?.delta?.content;
+              if (typeof content === 'string' && content) sender.send('ai-stream-chunk', content);
+            } catch (_) {}
+          }
+        }
+      }
+      if (buffer.startsWith('data: ')) {
+        const data = buffer.slice(6).trim();
+        if (data !== '[DONE]') {
+          try {
+            const obj = JSON.parse(data);
+            const content = obj.choices?.[0]?.delta?.content;
+            if (typeof content === 'string' && content) sender.send('ai-stream-chunk', content);
+          } catch (_) {}
+        }
+      }
+      sender.send('ai-stream-done');
+      return;
+    }
+  } catch (_) { /* fallback */ }
+  // Fallback: local env
+  const cfg = getAzureOpenAIConfig();
+  if (!cfg) {
+    sender.send('ai-stream-error', 'AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT required.');
     return;
   }
   try {
@@ -1042,13 +1172,7 @@ ipcMain.handle('call-ai-stream', async (event, { messages }) => {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': cfg.apiKey },
-      body: JSON.stringify({
-        messages,
-        max_tokens: 160,
-        temperature: 0.2,
-        top_p: 1,
-        stream: true,
-      }),
+      body: JSON.stringify({ ...body, stream: true }),
     });
     if (!res.ok) {
       const err = await res.text();
@@ -1095,16 +1219,28 @@ ipcMain.handle('call-ai-stream', async (event, { messages }) => {
   }
 });
 
-// Transcribe audio via Azure Speech REST
+// Transcribe audio via Azure Speech REST (Whisper fallback)
 ipcMain.handle('transcribe-audio', async (event, base64Audio, mimeType = 'audio/webm') => {
+  if (!base64Audio || typeof base64Audio !== 'string') return { error: 'Audio data required.' };
+  const buffer = Buffer.from(base64Audio, 'base64');
+  if (buffer.length < 500) return { error: 'Empty audio.' };
+  const language = (sessionConfig.language || 'en-US').trim() || 'en-US';
+  // Try backend proxy first
+  try {
+    const res = await fetch(`${API_BASE}/speechTranscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: base64Audio, language }),
+    });
+    const data = await res.json();
+    if (data.text) return { text: data.text };
+    if (data.error) return { error: data.error };
+  } catch (_) { /* fallback */ }
+  // Fallback: local env
   const azureKey = process.env.AZURE_SPEECH_KEY;
   const azureRegion = process.env.AZURE_SPEECH_REGION || 'eastus';
   if (!azureKey || !azureRegion) return { error: 'AZURE_SPEECH_KEY and AZURE_SPEECH_REGION required.' };
-  if (!base64Audio || typeof base64Audio !== 'string') return { error: 'Audio data required.' };
   try {
-    const buffer = Buffer.from(base64Audio, 'base64');
-    if (buffer.length < 500) return { error: 'Empty audio.' };
-    const language = (sessionConfig.language || 'en-US').trim() || 'en-US';
     const url = `https://${azureRegion}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=${encodeURIComponent(language)}`;
     const res = await fetch(url, {
       method: 'POST',
@@ -1120,6 +1256,19 @@ ipcMain.handle('transcribe-audio', async (event, base64Audio, mimeType = 'audio/
 });
 
 ipcMain.handle('analyze-image', async (_event, { imageBase64, prompt }) => {
+  const payload = { imageBase64, prompt };
+  // Try backend proxy first
+  try {
+    const res = await fetch(`${API_BASE}/analyzeImage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.text) return { text: data.text };
+    if (data.error) return { error: data.error.message };
+  } catch (_) { /* fallback */ }
+  // Fallback: local env
   const cfg = getAzureOpenAIConfig();
   if (!cfg) return { error: 'AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT required.' };
   try {

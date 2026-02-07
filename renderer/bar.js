@@ -132,7 +132,7 @@ async function startWhisperFallback() {
   updateWaveHighlight();
 }
 
-async function startAzureSpeech(key, region, language) {
+async function startAzureSpeech(keyOrToken, region, language, useToken = false) {
   const sdk = window.SpeechSDK || window.Microsoft?.CognitiveServices?.Speech;
   if (!sdk) {
     addTranscription('[Azure SDK not loaded]', new Date());
@@ -140,7 +140,9 @@ async function startAzureSpeech(key, region, language) {
   }
   const lang = (language || 'en-US').trim() || 'en-US';
   try {
-    const speechConfig = sdk.SpeechConfig.fromSubscription(key, region);
+    const speechConfig = useToken
+      ? sdk.SpeechConfig.fromAuthorizationToken(keyOrToken, region)
+      : sdk.SpeechConfig.fromSubscription(keyOrToken, region);
     speechConfig.speechRecognitionLanguage = lang;
     speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '2000');
     speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, '350');
@@ -188,8 +190,13 @@ async function startAzureSpeech(key, region, language) {
 async function startMic() {
   if (isMicRecording) return;
   const azureConfig = await (window.floatingAPI?.getAzureSpeechConfig?.() || Promise.resolve(null));
-  if (azureConfig?.key && azureConfig?.region) {
-    const ok = await startAzureSpeech(azureConfig.key, azureConfig.region, azureConfig.language);
+  if (azureConfig?.region && (azureConfig.token || azureConfig.key)) {
+    const ok = await startAzureSpeech(
+      azureConfig.token || azureConfig.key,
+      azureConfig.region,
+      azureConfig.language,
+      !!azureConfig.token
+    );
     if (ok) return;
     useWhisperFallback = true;
     startWhisperFallback();
@@ -295,7 +302,7 @@ function flushSystemAudioQuestion() {
 async function startSystemAudio() {
   if (isSystemAudioCapturing) return;
   const azureConfig = await (window.floatingAPI?.getAzureSpeechConfig?.() || Promise.resolve(null));
-  if (!azureConfig?.key || !azureConfig?.region) {
+  if (!azureConfig?.region || (!azureConfig?.token && !azureConfig?.key)) {
     addTranscription('[System audio: AZURE_SPEECH_KEY and AZURE_SPEECH_REGION required]', new Date(), 'system');
     return;
   }
@@ -315,7 +322,9 @@ async function startSystemAudio() {
       return;
     }
     const stream = new MediaStream(audioTracks);
-    const speechConfig = sdk.SpeechConfig.fromSubscription(azureConfig.key, azureConfig.region);
+    const speechConfig = azureConfig.token
+      ? sdk.SpeechConfig.fromAuthorizationToken(azureConfig.token, azureConfig.region)
+      : sdk.SpeechConfig.fromSubscription(azureConfig.key, azureConfig.region);
     const lang = (azureConfig.language || 'en-US').trim() || 'en-US';
     speechConfig.speechRecognitionLanguage = lang;
     speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '2000');
