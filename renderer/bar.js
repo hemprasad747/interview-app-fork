@@ -570,20 +570,14 @@ let freeSessionEnded = false;
 
 function updateCreditDisplay(seconds) {
   if (!barCredit) return;
-  if (sessionType === 'free') {
-    const totalSec = creditsMinutes * 60;
-    const remaining = Math.max(0, totalSec - seconds);
-    const rm = Math.floor(remaining / 60);
-    const rs = remaining % 60;
-    barCredit.textContent = rm + ':' + (rs < 10 ? '0' : '') + rs + ' left';
-    barCredit.title = remaining <= 60 ? 'Almost out – session will end soon' : 'Available time';
-    barCredit.classList.remove('credits-disabled');
-    barCredit.classList.toggle('credit-low', remaining > 0 && remaining <= 60);
-  } else {
-    barCredit.textContent = '0 min';
-    barCredit.title = 'Credits (coming soon)';
-    barCredit.classList.add('credits-disabled');
-  }
+  const totalSec = creditsMinutes * 60;
+  const remaining = Math.max(0, totalSec - seconds);
+  const rm = Math.floor(remaining / 60);
+  const rs = remaining % 60;
+  barCredit.textContent = rm + ':' + (rs < 10 ? '0' : '') + rs + ' left';
+  barCredit.title = remaining <= 60 ? 'Almost out – session will end soon' : 'Available time';
+  barCredit.classList.remove('credits-disabled');
+  barCredit.classList.toggle('credit-low', remaining > 0 && remaining <= 60);
 }
 
 if (window.floatingAPI?.getSessionConfig) {
@@ -606,7 +600,7 @@ if (window.floatingAPI?.onTimerTick) {
       barTimer.textContent = m + ':' + (s < 10 ? '0' : '') + s;
     }
     updateCreditDisplay(seconds);
-    if (sessionType === 'free' && !freeSessionEnded) {
+    if (!freeSessionEnded) {
       const remaining = Math.max(0, creditsMinutes * 60 - seconds);
       if (remaining <= 0) {
         freeSessionEnded = true;

@@ -30,6 +30,7 @@ const btnCheckUpdates = document.getElementById('btn-check-updates');
 const updateBanner = document.getElementById('update-banner');
 const updateBannerText = document.getElementById('update-banner-text');
 const btnRestartForUpdate = document.getElementById('btn-restart-for-update');
+const creditsBadgeText = document.getElementById('credits-badge-text');
 
 let currentStep = 0;
 let sessionMinimized = false;
@@ -50,6 +51,7 @@ async function initAuth() {
     const data = await window.floatingAPI?.getAuthData?.();
     if (data?.email || data?.token) {
       updateAuthUI(data, true);
+      await refreshCredits();
     }
   } catch (_) {}
 }
@@ -60,12 +62,17 @@ if (btnSignin && window.floatingAPI?.openAuthUrl) {
 if (btnSignout && window.floatingAPI?.signOutAuth) {
   btnSignout.addEventListener('click', async () => {
     await window.floatingAPI.signOutAuth();
+    userCreditsMinutes = 0;
+    if (creditsBadgeText) creditsBadgeText.textContent = '0 min';
     updateAuthUI(null, false);
     showStep(0);
   });
 }
 if (window.floatingAPI?.onAuthTokenReceived) {
-  window.floatingAPI.onAuthTokenReceived((data) => updateAuthUI(data, true));
+  window.floatingAPI.onAuthTokenReceived(async (data) => {
+    updateAuthUI(data, true);
+    await refreshCredits();
+  });
 }
 
 function showOnboarding() {
@@ -121,6 +128,15 @@ if (btnClose && window.floatingAPI?.windowClose) {
 
 const FULL_CREDITS_MIN_REQUIRED = 1;
 let userCreditsMinutes = 0;
+
+async function refreshCredits() {
+  try {
+    const data = await window.floatingAPI?.getCredits?.();
+    userCreditsMinutes = Math.max(0, Number(data?.creditsMinutes) || 0);
+    if (creditsBadgeText) creditsBadgeText.textContent = userCreditsMinutes + ' min';
+    updateStartSessionButton();
+  } catch (_) {}
+}
 
 function updateStartSessionButton() {
   if (!btnStartSession) return;
@@ -191,7 +207,11 @@ if (window.floatingAPI?.onSessionEnded) {
   window.floatingAPI.onSessionEnded(() => {
     sessionMinimized = false;
     showOnboarding();
+    refreshCredits();
   });
+}
+if (window.floatingAPI?.onCreditsChanged) {
+  window.floatingAPI.onCreditsChanged(() => refreshCredits());
 }
 
 const LAUNCHER_WAVE_MIN = 0.2;

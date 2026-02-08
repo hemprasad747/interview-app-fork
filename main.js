@@ -491,6 +491,11 @@ function createSessionWindows() {
   });
 
   barWindow.on('closed', () => {
+    const st = sessionConfig?.sessionType;
+    if (st === 'full' && sessionTimerSeconds > 0) {
+      const minutesUsed = Math.ceil(sessionTimerSeconds / 60);
+      deductUserCredits(minutesUsed);
+    }
     barWindow = null;
     sessionMinimized = false;
     snakeBarVisible = false;
@@ -510,6 +515,7 @@ function createSessionWindows() {
       mainWindow.show();
       mainWindow.setBounds(centerTopPosition(STEP1_WIDTH, STEP1_HEIGHT));
       mainWindow.webContents.send('session-ended');
+      mainWindow.webContents.send('credits-changed');
     }
   });
   leftWindow.on('closed', () => { leftWindow = null; });
@@ -983,6 +989,39 @@ ipcMain.handle('get-session-config', () => sessionConfig);
 ipcMain.handle('open-auth-url', () => shell.openExternal(AUTH_CALLBACK_URL));
 ipcMain.handle('get-auth-data', () => getAuthData());
 ipcMain.handle('sign-out-auth', () => { setAuthData(null); });
+
+async function fetchUserCredits() {
+  const auth = getAuthData();
+  const token = auth?.token;
+  if (!token) return { creditsMinutes: 0 };
+  try {
+    const res = await fetch(`${API_BASE}/userCredits`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { creditsMinutes: 0 };
+    const data = await res.json();
+    return { creditsMinutes: Math.max(0, Number(data?.creditsMinutes) || 0) };
+  } catch (_) {
+    return { creditsMinutes: 0 };
+  }
+}
+
+async function deductUserCredits(minutesUsed) {
+  const auth = getAuthData();
+  const token = auth?.token;
+  if (!token || minutesUsed <= 0) return;
+  try {
+    await fetch(`${API_BASE}/userCreditsDeduct`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ minutesUsed }),
+    });
+  } catch (e) {
+    console.error('Deduct credits failed', e);
+  }
+}
+
+ipcMain.handle('get-user-credits', () => fetchUserCredits());
 
 ipcMain.handle('check-for-updates', () => {
   if (process.platform === 'win32' && app.isPackaged) {
