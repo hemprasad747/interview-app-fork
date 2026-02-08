@@ -68,6 +68,7 @@ contextBridge.exposeInMainWorld('floatingAPI', {
   openAuthUrl: () => ipcRenderer.invoke('open-auth-url'),
   openBuyCreditsUrl: () => ipcRenderer.invoke('open-buy-credits-url'),
   getAuthData: () => ipcRenderer.invoke('get-auth-data'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   signOutAuth: () => ipcRenderer.invoke('sign-out-auth'),
   getCredits: () => ipcRenderer.invoke('get-user-credits'),
   onCreditsChanged: (cb) => ipcRenderer.on('credits-changed', () => cb()),

@@ -47,7 +47,18 @@ function updateAuthUI(data, skipToStep1) {
   if (signedIn && skipToStep1) showStep(1);
 }
 
+async function setVersionTooltip() {
+  const el = document.getElementById('launcher-brand');
+  if (el && window.floatingAPI?.getAppVersion) {
+    try {
+      const v = await window.floatingAPI.getAppVersion();
+      if (v) el.title = 'Version ' + v;
+    } catch (_) {}
+  }
+}
+
 async function initAuth() {
+  setVersionTooltip();
   try {
     const data = await window.floatingAPI?.getAuthData?.();
     if (data?.email || data?.token) {

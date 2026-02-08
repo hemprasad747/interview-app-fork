@@ -1021,6 +1021,7 @@ ipcMain.handle('is-session-active', () => sessionActive);
 ipcMain.handle('open-auth-url', () => shell.openExternal(AUTH_CALLBACK_URL));
 ipcMain.handle('open-buy-credits-url', () => shell.openExternal(BUY_CREDITS_URL));
 ipcMain.handle('get-auth-data', () => getAuthData());
+ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('sign-out-auth', () => { setAuthData(null); });
 
 async function fetchUserCredits() {
