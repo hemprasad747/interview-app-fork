@@ -4,7 +4,7 @@ A desktop interview app that:
 
 - **Captures audio** via the microphone and shows live transcript (Azure Speech, Web Speech API, or Whisper fallback).
 - **Sends the transcript to an AI** (OpenAI) for evaluation and tips.
-- **Excludes the window from screen capture** on Windows and macOS (`setContentProtection(true)` → `SetWindowDisplayAffinity` / `NSWindowSharingNone`), so screenshots and recorders won’t show this window.
+- **Excludes the window from screen capture** on Windows and macOS (`setContentProtection(true)` → `SetWindowDisplayAffinity` / `NSWindowSharingNone`), So screenshots and recorders won’t show this window.
 
 ## Requirements
 
