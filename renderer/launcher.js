@@ -204,16 +204,56 @@ if (window.floatingAPI?.onSessionMinimized) {
     showMinimized();
   });
 }
+if (window.floatingAPI?.onCreditsChanged) {
+  window.floatingAPI.onCreditsChanged(() => refreshCredits());
+}
+// Refresh credits when launcher gets focus (e.g. after returning from buy-credits in browser)
+let lastCreditsRefreshOnFocus = 0;
+window.addEventListener('focus', () => {
+  if (Date.now() - lastCreditsRefreshOnFocus < 2000) return;
+  lastCreditsRefreshOnFocus = Date.now();
+  refreshCredits();
+});
+
+// 30-minute inactivity timeout: sign out if no activity for 30 min
+const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
+let lastActivityTime = Date.now();
+
+function resetInactivityTimer() {
+  lastActivityTime = Date.now();
+}
+
+async function checkInactivityAndSignOut() {
+  try {
+    const data = await window.floatingAPI?.getAuthData?.();
+    if (!data?.token) return;
+    const sessionActive = await window.floatingAPI?.isSessionActive?.();
+    if (sessionActive) return;
+    if (Date.now() - lastActivityTime >= INACTIVITY_TIMEOUT_MS) {
+      await window.floatingAPI?.signOutAuth?.();
+      userCreditsMinutes = 0;
+      if (creditsBadgeText) creditsBadgeText.textContent = '0 min';
+      updateAuthUI(null, false);
+      showStep(0);
+    }
+  } catch (_) {}
+}
+
+['mousedown', 'keydown', 'click', 'scroll'].forEach((ev) => {
+  window.addEventListener(ev, resetInactivityTimer);
+});
+window.addEventListener('focus', resetInactivityTimer);
+
 if (window.floatingAPI?.onSessionEnded) {
   window.floatingAPI.onSessionEnded(() => {
+    resetInactivityTimer();
     sessionMinimized = false;
     showOnboarding();
     refreshCredits();
   });
 }
-if (window.floatingAPI?.onCreditsChanged) {
-  window.floatingAPI.onCreditsChanged(() => refreshCredits());
-}
+
+setInterval(checkInactivityAndSignOut, 60000);
 if (btnBuyCredits && window.floatingAPI?.openBuyCreditsUrl) {
   btnBuyCredits.addEventListener('click', () => window.floatingAPI.openBuyCreditsUrl());
 }

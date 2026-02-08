@@ -491,11 +491,11 @@ function createSessionWindows() {
     barWindow.focus();
   });
 
-  barWindow.on('closed', () => {
+  barWindow.on('closed', async () => {
     const st = sessionConfig?.sessionType;
     if (st === 'full' && sessionTimerSeconds > 0) {
       const minutesUsed = Math.ceil(sessionTimerSeconds / 60);
-      deductUserCredits(minutesUsed);
+      await deductUserCredits(minutesUsed);
     }
     barWindow = null;
     sessionMinimized = false;
@@ -986,6 +986,7 @@ ipcMain.handle('get-azure-speech-config', async () => {
 });
 
 ipcMain.handle('get-session-config', () => sessionConfig);
+ipcMain.handle('is-session-active', () => sessionActive);
 
 ipcMain.handle('open-auth-url', () => shell.openExternal(AUTH_CALLBACK_URL));
 ipcMain.handle('open-buy-credits-url', () => shell.openExternal(BUY_CREDITS_URL));

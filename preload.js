@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('floatingAPI', {
   setWindowBounds: (opts) => ipcRenderer.invoke('set-window-bounds', opts),
   startSession: (config) => ipcRenderer.invoke('start-session', config),
   getSessionConfig: () => ipcRenderer.invoke('get-session-config'),
+  isSessionActive: () => ipcRenderer.invoke('is-session-active'),
   endSession: () => ipcRenderer.invoke('end-session'),
   collapseSession: () => ipcRenderer.invoke('collapse-session'),
   expandSession: () => ipcRenderer.invoke('expand-session'),
