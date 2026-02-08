@@ -31,6 +31,7 @@ const updateBanner = document.getElementById('update-banner');
 const updateBannerText = document.getElementById('update-banner-text');
 const btnRestartForUpdate = document.getElementById('btn-restart-for-update');
 const creditsBadgeText = document.getElementById('credits-badge-text');
+const btnBuyCredits = document.getElementById('btn-buy-credits');
 
 let currentStep = 0;
 let sessionMinimized = false;
@@ -212,6 +213,9 @@ if (window.floatingAPI?.onSessionEnded) {
 }
 if (window.floatingAPI?.onCreditsChanged) {
   window.floatingAPI.onCreditsChanged(() => refreshCredits());
+}
+if (btnBuyCredits && window.floatingAPI?.openBuyCreditsUrl) {
+  btnBuyCredits.addEventListener('click', () => window.floatingAPI.openBuyCreditsUrl());
 }
 
 const LAUNCHER_WAVE_MIN = 0.2;

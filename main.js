@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell } = require(
 /** Backend proxy URL - keeps Azure keys server-side. Set API_BASE_URL in env to override. */
 const API_BASE = process.env.API_BASE_URL || 'https://us-central1-alphaviewai-d7f9d.cloudfunctions.net';
 const AUTH_CALLBACK_URL = 'https://alphaviewai.com/auth-callback.html?desktop=1';
+const BUY_CREDITS_URL = 'https://alphaviewai.com/buy-credits.html';
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
@@ -987,6 +988,7 @@ ipcMain.handle('get-azure-speech-config', async () => {
 ipcMain.handle('get-session-config', () => sessionConfig);
 
 ipcMain.handle('open-auth-url', () => shell.openExternal(AUTH_CALLBACK_URL));
+ipcMain.handle('open-buy-credits-url', () => shell.openExternal(BUY_CREDITS_URL));
 ipcMain.handle('get-auth-data', () => getAuthData());
 ipcMain.handle('sign-out-auth', () => { setAuthData(null); });
 

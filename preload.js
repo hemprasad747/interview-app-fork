@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld('floatingAPI', {
   launcherRestoreFromIcon: () => ipcRenderer.invoke('launcher-restore-from-icon'),
   launcherSetStepSize: (step) => ipcRenderer.invoke('launcher-set-step-size', step),
   openAuthUrl: () => ipcRenderer.invoke('open-auth-url'),
+  openBuyCreditsUrl: () => ipcRenderer.invoke('open-buy-credits-url'),
   getAuthData: () => ipcRenderer.invoke('get-auth-data'),
   signOutAuth: () => ipcRenderer.invoke('sign-out-auth'),
   getCredits: () => ipcRenderer.invoke('get-user-credits'),

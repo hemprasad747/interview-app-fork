@@ -1271,6 +1271,7 @@ html.launcher-doc.launcher-window-minimized,
   display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px;
   background: rgba(255,255,255,0.08); color: var(--text-muted);
 }
+.launcher-buy-credits { margin-left: 6px; font-size: 11px; }
 .launcher-credits-badge svg { flex-shrink: 0; }
 .launcher-session-type-subtitle { color: var(--text-muted); font-size: 12px; margin-bottom: 12px; }
 
