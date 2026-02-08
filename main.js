@@ -29,6 +29,35 @@ function setAuthData(data) {
   } catch (e) { console.error('Auth save error', e); }
 }
 
+async function saveSessionToApi() {
+  const auth = getAuthData();
+  const token = auth?.token;
+  if (!token || !sessionConfig || !sessionTranscriptHistory?.length) return;
+  const session = {
+    id: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: new Date().toISOString(),
+    durationSeconds: sessionTimerSeconds || 0,
+    sessionType: sessionConfig.sessionType || 'unknown',
+    company: sessionConfig.company || '',
+    position: sessionConfig.position || '',
+    transcriptHistory: [...sessionTranscriptHistory],
+    conversationHistory: [...(sessionConversationHistory || [])],
+    config: {
+      language: sessionConfig.language,
+      instructions: sessionConfig.instructions,
+      resumeSnippet: sessionConfig.resume || sessionConfig.resumeSnippet
+    }
+  };
+  try {
+    const res = await fetch(`${API_BASE}/saveSession`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(session),
+    });
+    if (!res.ok) console.error('Save session failed', res.status);
+  } catch (e) { console.error('Save session error', e); }
+}
+
 function parseProtocolUrl(url) {
   if (!url || typeof url !== 'string') return null;
   try {
@@ -497,6 +526,7 @@ function createSessionWindows() {
       const minutesUsed = Math.ceil(sessionTimerSeconds / 60);
       await deductUserCredits(minutesUsed);
     }
+    saveSessionToApi();
     barWindow = null;
     sessionMinimized = false;
     snakeBarVisible = false;
