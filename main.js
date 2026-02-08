@@ -30,6 +30,7 @@ function setAuthData(data) {
 }
 
 async function saveSessionToApi() {
+  if (sessionConfig?.sessionType !== 'full') return;
   const auth = getAuthData();
   const token = auth?.token;
   if (!token || !sessionConfig || !sessionTranscriptHistory?.length) return;
