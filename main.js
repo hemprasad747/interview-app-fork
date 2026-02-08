@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell, globalShortcut } = require('electron');
 /** Backend proxy URL - keeps Azure keys server-side. Set API_BASE_URL in env to override. */
 const API_BASE = process.env.API_BASE_URL || 'https://us-central1-alphaviewai-d7f9d.cloudfunctions.net';
 const AUTH_CALLBACK_URL = 'https://alphaviewai.com/auth-callback.html?desktop=1';
@@ -295,9 +295,9 @@ function createAndShowPositionOverlayWindow() {
   });
   positionOverlayWindow.once('ready-to-show', () => {
     if (positionOverlayWindow && !positionOverlayWindow.isDestroyed()) {
-      // if (process.platform === 'win32' || process.platform === 'darwin') {
-      //   positionOverlayWindow.setContentProtection(true);
-      // }
+      if (process.platform === 'win32' || process.platform === 'darwin') {
+        positionOverlayWindow.setContentProtection(true);
+      }
       positionOverlayWindow.show();
       positionOverlayWindow.focus();
     }
@@ -473,12 +473,12 @@ function createSessionWindows() {
   setupSessionHandlers(snakeBarWindow);
 
   barWindow.once('ready-to-show', () => {
-    // if (process.platform === 'win32' || process.platform === 'darwin') {
-    //   if (barWindow && !barWindow.isDestroyed()) barWindow.setContentProtection(true);
-    //   if (leftWindow && !leftWindow.isDestroyed()) leftWindow.setContentProtection(true);
-    //   if (rightWindow && !rightWindow.isDestroyed()) rightWindow.setContentProtection(true);
-    //   if (snakeBarWindow && !snakeBarWindow.isDestroyed()) snakeBarWindow.setContentProtection(true);
-    // }
+    if (process.platform === 'win32' || process.platform === 'darwin') {
+      if (barWindow && !barWindow.isDestroyed()) barWindow.setContentProtection(true);
+      if (leftWindow && !leftWindow.isDestroyed()) leftWindow.setContentProtection(true);
+      if (rightWindow && !rightWindow.isDestroyed()) rightWindow.setContentProtection(true);
+      if (snakeBarWindow && !snakeBarWindow.isDestroyed()) snakeBarWindow.setContentProtection(true);
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setBounds({ x: -10000, y: -10000, width: 52, height: 52 });
       mainWindow.hide();
@@ -612,9 +612,9 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    // if (process.platform === 'win32' || process.platform === 'darwin') {
-    //   mainWindow.setContentProtection(true);
-    // }
+    if (process.platform === 'win32' || process.platform === 'darwin') {
+      mainWindow.setContentProtection(true);
+    }
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
@@ -1102,12 +1102,41 @@ if (!gotTheLock) {
   });
 }
 
+function forceShowAllWindows() {
+  try {
+    if (sessionActive && barWindow && !barWindow.isDestroyed()) {
+      barWindow.show();
+      try { barWindow.setOpacity(1); } catch (_) {}
+      barWindow.focus();
+      if (leftWindow && !leftWindow.isDestroyed()) {
+        leftWindow.show();
+        try { leftWindow.setOpacity(1); } catch (_) {}
+      }
+      if (rightWindow && !rightWindow.isDestroyed()) {
+        rightWindow.show();
+        try { rightWindow.setOpacity(1); } catch (_) {}
+      }
+      if (snakeBarVisible && snakeBarWindow && !snakeBarWindow.isDestroyed()) {
+        snakeBarWindow.show();
+        try { snakeBarWindow.setOpacity(1); } catch (_) {}
+      }
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      try { mainWindow.setOpacity(1); } catch (_) {}
+      if (!sessionActive || !barWindow || barWindow.isDestroyed()) mainWindow.focus();
+    }
+  } catch (_) {}
+}
+
 app.whenReady().then(() => {
   // Only register protocol when packaged - dev mode would overwrite with electron.exe and break protocol links
   if (app.isPackaged) {
     app.setAsDefaultProtocolClient('alphaviewai');
   }
   createWindow();
+
+  globalShortcut.register('CommandOrControl+Shift+R', () => forceShowAllWindows());
   // Handle protocol URL when app is launched via alphaviewai:// (e.g. from browser redirect)
   const cmd = process.argv.find((a) => typeof a === 'string' && a.startsWith('alphaviewai://'));
   if (cmd) handleAuthUrl(cmd);
@@ -1133,6 +1162,7 @@ app.whenReady().then(() => {
 app.on('open-url', (_event, url) => { handleAuthUrl(url); });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('will-quit', () => { globalShortcut.unregisterAll(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 
 function getAzureOpenAIConfig() {
