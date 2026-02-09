@@ -1002,11 +1002,8 @@ ipcMain.handle('get-azure-speech-config', async () => {
   const isFull = (sessionConfig.sessionType || '').toString().toLowerCase() === 'full';
   let url = `${API_BASE}/speechToken?language=${encodeURIComponent(language)}`;
   if (isFull) url += '&mode=full';
-  const headers = {};
-  if (isFull) {
-    const auth = getAuthData();
-    if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
-  }
+  const auth = getAuthData();
+  const headers = auth?.token ? { Authorization: `Bearer ${auth.token}` } : {};
   // Try backend proxy first (returns { token, region, language }) - no keys in app
   try {
     const res = await fetch(url, { headers: Object.keys(headers).length ? headers : undefined });
@@ -1298,11 +1295,13 @@ ipcMain.handle('call-ai', async (_event, { transcript, systemPrompt }) => {
     temperature: 0.2,
     top_p: 1,
   };
-  // Try backend proxy first
+  const auth = getAuthData();
+  const headers = { 'Content-Type': 'application/json' };
+  if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
   try {
     const res = await fetch(`${API_BASE}/openaiChat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     });
     const data = await res.json();
@@ -1335,11 +1334,13 @@ ipcMain.handle('call-ai-stream', async (event, { messages }) => {
     return;
   }
   const body = { messages, max_tokens: 160, temperature: 0.2, top_p: 1 };
-  // Try backend proxy first
+  const auth = getAuthData();
+  const headers = { 'Content-Type': 'application/json' };
+  if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
   try {
     const res = await fetch(`${API_BASE}/openaiChatStream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     });
     if (res.ok && res.body) {
@@ -1442,11 +1443,13 @@ ipcMain.handle('transcribe-audio', async (event, base64Audio, mimeType = 'audio/
   const buffer = Buffer.from(base64Audio, 'base64');
   if (buffer.length < 500) return { error: 'Empty audio.' };
   const language = (sessionConfig.language || 'en-US').trim() || 'en-US';
-  // Try backend proxy first
+  const auth = getAuthData();
+  const headers = { 'Content-Type': 'application/json' };
+  if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
   try {
     const res = await fetch(`${API_BASE}/speechTranscribe`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ audio: base64Audio, language }),
     });
     const data = await res.json();
@@ -1474,11 +1477,13 @@ ipcMain.handle('transcribe-audio', async (event, base64Audio, mimeType = 'audio/
 
 ipcMain.handle('analyze-image', async (_event, { imageBase64, prompt }) => {
   const payload = { imageBase64, prompt };
-  // Try backend proxy first
+  const auth = getAuthData();
+  const headers = { 'Content-Type': 'application/json' };
+  if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
   try {
     const res = await fetch(`${API_BASE}/analyzeImage`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await res.json();
