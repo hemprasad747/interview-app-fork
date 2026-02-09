@@ -9,6 +9,9 @@ ipcRenderer.on('ai-stream-done', () => {
 ipcRenderer.on('ai-stream-error', (_e, err) => {
   window.dispatchEvent(new CustomEvent('ai-stream-error', { detail: err }));
 });
+ipcRenderer.on('free-session-cooldown', (_e, data) => {
+  window.dispatchEvent(new CustomEvent('free-session-cooldown', { detail: data }));
+});
 
 contextBridge.exposeInMainWorld('floatingAPI', {
   getAzureSpeechConfig: () => ipcRenderer.invoke('get-azure-speech-config'),

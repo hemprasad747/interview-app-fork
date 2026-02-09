@@ -332,6 +332,13 @@ async function checkInactivityAndSignOut() {
 });
 window.addEventListener('focus', resetInactivityTimer);
 
+window.addEventListener('free-session-cooldown', (e) => {
+  const d = e.detail || {};
+  const msg = d.message || 'Please wait 5 minutes before starting another free session.';
+  const mins = Math.ceil((d.waitSeconds || 300) / 60);
+  alert(mins > 0 ? `${msg}\n\n${mins} minute(s) remaining.` : msg);
+});
+
 if (window.floatingAPI?.onSessionEnded) {
   window.floatingAPI.onSessionEnded(() => {
     resetInactivityTimer();

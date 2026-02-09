@@ -388,6 +388,10 @@ async function startMic() {
     return;
   }
   const azureConfig = await (window.floatingAPI?.getAzureSpeechConfig?.() || Promise.resolve(null));
+  if (azureConfig?.code === 'FREE_SESSION_COOLDOWN') {
+    if (window.floatingAPI?.endSession) window.floatingAPI.endSession();
+    return;
+  }
   if (azureConfig?.region && (azureConfig.token || azureConfig.key)) {
     const ok = await startAzureSpeech(
       azureConfig.token || azureConfig.key,
@@ -513,6 +517,10 @@ async function startSystemAudio() {
   if (isSystemAudioCapturing) return;
   if (!sessionActive) return;
   const azureConfig = await (window.floatingAPI?.getAzureSpeechConfig?.() || Promise.resolve(null));
+  if (azureConfig?.code === 'FREE_SESSION_COOLDOWN') {
+    if (window.floatingAPI?.endSession) window.floatingAPI.endSession();
+    return;
+  }
   if (!azureConfig?.region || (!azureConfig?.token && !azureConfig?.key)) {
     addTranscriptionToHistory('[System audio: AZURE_SPEECH_KEY and AZURE_SPEECH_REGION required]', new Date(), 'system');
     return;

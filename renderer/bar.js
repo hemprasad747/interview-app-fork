@@ -191,6 +191,10 @@ async function startAzureSpeech(keyOrToken, region, language, useToken = false) 
 async function startMic() {
   if (isMicRecording) return;
   const azureConfig = await (window.floatingAPI?.getAzureSpeechConfig?.() || Promise.resolve(null));
+  if (azureConfig?.code === 'FREE_SESSION_COOLDOWN') {
+    if (window.floatingAPI?.endSession) window.floatingAPI.endSession();
+    return;
+  }
   if (azureConfig?.region && (azureConfig.token || azureConfig.key)) {
     const ok = await startAzureSpeech(
       azureConfig.token || azureConfig.key,
@@ -303,6 +307,10 @@ function flushSystemAudioQuestion() {
 async function startSystemAudio() {
   if (isSystemAudioCapturing) return;
   const azureConfig = await (window.floatingAPI?.getAzureSpeechConfig?.() || Promise.resolve(null));
+  if (azureConfig?.code === 'FREE_SESSION_COOLDOWN') {
+    if (window.floatingAPI?.endSession) window.floatingAPI.endSession();
+    return;
+  }
   if (!azureConfig?.region || (!azureConfig?.token && !azureConfig?.key)) {
     addTranscription('[System audio: AZURE_SPEECH_KEY and AZURE_SPEECH_REGION required]', new Date(), 'system');
     return;

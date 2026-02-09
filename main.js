@@ -1007,9 +1007,18 @@ ipcMain.handle('get-azure-speech-config', async () => {
   // Try backend proxy first (returns { token, region, language }) - no keys in app
   try {
     const res = await fetch(url, { headers: Object.keys(headers).length ? headers : undefined });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.token && data.region) return { token: data.token, region: data.region, language: data.language || language };
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.token && data.region) {
+      return { token: data.token, region: data.region, language: data.language || language };
+    }
+    if (res.status === 403 && data.code === 'FREE_SESSION_COOLDOWN') {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('free-session-cooldown', {
+          message: data.error || 'Please wait 5 minutes before starting another free session.',
+          waitSeconds: data.waitSeconds || 300,
+        });
+      }
+      return { error: data.error, code: 'FREE_SESSION_COOLDOWN', waitSeconds: data.waitSeconds || 300 };
     }
   } catch (_) {}
   // Fallback: local env (for dev only - keys in .env)
