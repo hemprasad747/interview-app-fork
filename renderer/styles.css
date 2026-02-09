@@ -1106,6 +1106,40 @@ html.launcher-doc.launcher-window-minimized,
   color: var(--launcher-text);
 }
 
+.launcher-resume-row { margin-bottom: 8px; }
+.launcher-resume-row > label { display: block; font-size: 11px; color: var(--launcher-text-muted); margin-bottom: 6px; }
+.launcher-resume-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.launcher-select-resume {
+  flex: 1;
+  min-width: 120px;
+  max-width: 100%;
+}
+.launcher-resume-file-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+.launcher-btn-upload-resume {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  padding: 8px 12px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.launcher-btn-upload-resume:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
 .launcher-lang-note {
   font-size: 11px;
   color: var(--launcher-text-muted);

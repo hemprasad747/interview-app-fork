@@ -69,8 +69,21 @@
       <input type="text" id="input-company" placeholder="e.g. Acme Corp" autocomplete="organization" />
       <label for="input-position">Position</label>
       <input type="text" id="input-position" placeholder="e.g. Senior Developer" autocomplete="organization-title" />
-      <label for="input-resume">Resume (paste or brief summary)</label>
-      <textarea id="input-resume" placeholder="Paste your resume text or a short summary of your experience…"></textarea>
+      <div class="launcher-resume-row">
+        <label>Resume</label>
+        <div class="launcher-resume-controls">
+          <select id="select-resume" class="launcher-select-resume" title="Select a resume (from web or app)">
+            <option value="">— Select or paste below —</option>
+          </select>
+          <input type="file" id="resume-file-input" class="launcher-resume-file-input" accept=".pdf,.doc,.docx,.txt" />
+          <button type="button" class="launcher-btn launcher-btn-upload-resume" id="btn-upload-resume" title="Upload resume (syncs to web)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Upload
+          </button>
+        </div>
+      </div>
+      <label for="input-resume">Resume text (paste or edit; used for AI context)</label>
+      <textarea id="input-resume" placeholder="Paste your resume text or a short summary. If you selected a resume above, its summary will appear here."></textarea>
       </div>
       <div class="launcher-footer launcher-footer-row">
         <button type="button" class="launcher-btn launcher-btn-secondary" id="btn-back-1">Back</button>

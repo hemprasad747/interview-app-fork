@@ -30,7 +30,6 @@ function setAuthData(data) {
 }
 
 async function saveSessionToApi() {
-  if (sessionConfig?.sessionType !== 'full') return;
   const auth = getAuthData();
   const token = auth?.token;
   if (!token || !sessionConfig || !sessionTranscriptHistory?.length) return;
@@ -55,7 +54,10 @@ async function saveSessionToApi() {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(session),
     });
-    if (!res.ok) console.error('Save session failed', res.status);
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('Save session failed', res.status, errText);
+    }
   } catch (e) { console.error('Save session error', e); }
 }
 
@@ -522,11 +524,7 @@ function createSessionWindows() {
   });
 
   barWindow.on('closed', async () => {
-    const st = sessionConfig?.sessionType;
-    if (st === 'full' && sessionTimerSeconds > 0) {
-      const minutesUsed = Math.ceil(sessionTimerSeconds / 60);
-      await deductUserCredits(minutesUsed);
-    }
+    // Full-session credits are deducted server-side in saveSession (cannot be bypassed by modified client)
     saveSessionToApi();
     barWindow = null;
     sessionMinimized = false;
@@ -1001,9 +999,17 @@ ipcMain.handle('get-screen-bounds', () => {
 
 ipcMain.handle('get-azure-speech-config', async () => {
   const language = (sessionConfig.language || 'en-US').trim() || 'en-US';
+  const isFull = (sessionConfig.sessionType || '').toString().toLowerCase() === 'full';
+  let url = `${API_BASE}/speechToken?language=${encodeURIComponent(language)}`;
+  if (isFull) url += '&mode=full';
+  const headers = {};
+  if (isFull) {
+    const auth = getAuthData();
+    if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
+  }
   // Try backend proxy first (returns { token, region, language }) - no keys in app
   try {
-    const res = await fetch(`${API_BASE}/speechToken?language=${encodeURIComponent(language)}`);
+    const res = await fetch(url, { headers: Object.keys(headers).length ? headers : undefined });
     if (res.ok) {
       const data = await res.json();
       if (data.token && data.region) return { token: data.token, region: data.region, language: data.language || language };
@@ -1019,7 +1025,38 @@ ipcMain.handle('get-azure-speech-config', async () => {
 ipcMain.handle('get-session-config', () => sessionConfig);
 ipcMain.handle('is-session-active', () => sessionActive);
 
-ipcMain.handle('open-auth-url', () => shell.openExternal(AUTH_CALLBACK_URL));
+let authWindow = null;
+ipcMain.handle('open-auth-url', () => {
+  if (app.isPackaged) {
+    shell.openExternal(AUTH_CALLBACK_URL);
+    return;
+  }
+  if (authWindow && !authWindow.isDestroyed()) {
+    authWindow.focus();
+    return;
+  }
+  authWindow = new BrowserWindow({
+    width: 480,
+    height: 640,
+    parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+    modal: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+  });
+  authWindow.setMenuBarVisibility(false);
+  const handleAuthRedirect = (e, url) => {
+    if (url.startsWith('alphaviewai:')) {
+      e.preventDefault();
+      handleAuthUrl(url);
+      if (authWindow && !authWindow.isDestroyed()) authWindow.close();
+      authWindow = null;
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
+    }
+  };
+  authWindow.webContents.on('will-navigate', handleAuthRedirect);
+  authWindow.webContents.on('will-redirect', handleAuthRedirect);
+  authWindow.on('closed', () => { authWindow = null; });
+  authWindow.loadURL(AUTH_CALLBACK_URL);
+});
 ipcMain.handle('open-buy-credits-url', () => shell.openExternal(BUY_CREDITS_URL));
 ipcMain.handle('get-auth-data', () => getAuthData());
 ipcMain.handle('get-app-version', () => app.getVersion());
@@ -1057,6 +1094,52 @@ async function deductUserCredits(minutesUsed) {
 }
 
 ipcMain.handle('get-user-credits', () => fetchUserCredits());
+
+async function apiWithAuth(path, options = {}) {
+  const auth = getAuthData();
+  const token = auth?.token;
+  if (!token) return { error: 'Not signed in' };
+  const url = `${API_BASE}${path}`;
+  const headers = { ...options.headers, Authorization: `Bearer ${token}` };
+  try {
+    const res = await fetch(url, { ...options, headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data.error || res.statusText };
+    return data;
+  } catch (e) {
+    return { error: e.message || 'Request failed' };
+  }
+}
+
+ipcMain.handle('list-resumes', async () => {
+  const data = await apiWithAuth('/listResumes');
+  if (data.error) return { resumes: [], error: data.error };
+  return { resumes: data.resumes || [] };
+});
+
+ipcMain.handle('get-resume', async (_event, resumeId) => {
+  if (!resumeId) return { error: 'resumeId required' };
+  const data = await apiWithAuth(`/getResume?resumeId=${encodeURIComponent(resumeId)}`);
+  if (data.error) return { error: data.error };
+  return data;
+});
+
+ipcMain.handle('upload-resume', async (_event, { fileBase64, fileName, name, textSummary, mimeType }) => {
+  if (!fileBase64) return { error: 'fileBase64 required' };
+  const data = await apiWithAuth('/uploadResume', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fileBase64,
+      fileName: fileName || 'resume.pdf',
+      name: name || fileName || 'Resume',
+      textSummary: textSummary || '',
+      mimeType: mimeType || 'application/octet-stream',
+    }),
+  });
+  if (data.error) return { error: data.error };
+  return { id: data.id, name: data.name, createdAt: data.createdAt };
+});
 
 ipcMain.handle('check-for-updates', () => {
   if (process.platform === 'win32' && app.isPackaged) {
@@ -1126,13 +1209,14 @@ ipcMain.handle('launcher-set-step-size', (_event, step) => {
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
-} else {
-  app.on('second-instance', (_event, argv) => {
-    if (mainWindow) mainWindow.focus();
-    const url = argv.find((a) => typeof a === 'string' && a.startsWith('alphaviewai://'));
-    if (url) handleAuthUrl(url);
-  });
+  process.exit(0);
 }
+
+app.on('second-instance', (_event, argv) => {
+  if (mainWindow) mainWindow.focus();
+  const url = argv.find((a) => typeof a === 'string' && a.startsWith('alphaviewai://'));
+  if (url) handleAuthUrl(url);
+});
 
 function forceShowAllWindows() {
   try {
@@ -1162,14 +1246,12 @@ function forceShowAllWindows() {
 }
 
 app.whenReady().then(() => {
-  // Only register protocol when packaged - dev mode would overwrite with electron.exe and break protocol links
-  if (app.isPackaged) {
-    app.setAsDefaultProtocolClient('alphaviewai');
-  }
+  // Only register protocol when packaged; in dev we use an in-app auth window to avoid "Unable to find Electron app" when OS launches electron with URL as argv
+  if (app.isPackaged) app.setAsDefaultProtocolClient('alphaviewai');
   createWindow();
 
   globalShortcut.register('CommandOrControl+Shift+R', () => forceShowAllWindows());
-  // Handle protocol URL when app is launched via alphaviewai:// (e.g. from browser redirect)
+  // Handle protocol URL when this instance was launched with alphaviewai:// (e.g. first launch from browser)
   const cmd = process.argv.find((a) => typeof a === 'string' && a.startsWith('alphaviewai://'));
   if (cmd) handleAuthUrl(cmd);
   if (process.platform === 'win32' && app.isPackaged) {

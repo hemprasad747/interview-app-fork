@@ -7,6 +7,9 @@ const step3 = document.getElementById('step3');
 const inputCompany = document.getElementById('input-company');
 const inputPosition = document.getElementById('input-position');
 const inputResume = document.getElementById('input-resume');
+const selectResume = document.getElementById('select-resume');
+const resumeFileInput = document.getElementById('resume-file-input');
+const btnUploadResume = document.getElementById('btn-upload-resume');
 const inputLanguage = document.getElementById('input-language');
 const inputInstructions = document.getElementById('input-instructions');
 const btnNext = document.getElementById('btn-next');
@@ -117,7 +120,40 @@ function showStep(step) {
   if (step2) step2.classList.toggle('active', step === 2);
   if (step3) step3.classList.toggle('active', step === 3);
   if (step === 3) updateStartSessionButton();
+  if (step === 1) refreshResumesList();
   if (window.floatingAPI?.launcherSetStepSize) window.floatingAPI.launcherSetStepSize(step);
+}
+
+async function refreshResumesList() {
+  if (!selectResume || !window.floatingAPI?.listResumes) return;
+  selectResume.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '— Select or paste below —';
+  selectResume.appendChild(placeholder);
+  try {
+    const { resumes, error } = await window.floatingAPI.listResumes();
+    if (error || !resumes || !resumes.length) return;
+    resumes.forEach((r) => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      opt.textContent = r.name || r.fileName || 'Resume';
+      selectResume.appendChild(opt);
+    });
+  } catch (_) {}
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      const base64 = dataUrl.indexOf('base64,') >= 0 ? dataUrl.split('base64,')[1] : dataUrl;
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 if (btnNextFromLogin) btnNextFromLogin.addEventListener('click', () => showStep(1));
@@ -126,6 +162,47 @@ if (btnNextToSessionType) btnNextToSessionType.addEventListener('click', () => s
 if (btnBack1) btnBack1.addEventListener('click', () => showStep(0));
 if (btnBack2) btnBack2.addEventListener('click', () => showStep(1));
 if (btnBack3) btnBack3.addEventListener('click', () => showStep(2));
+
+if (selectResume && window.floatingAPI?.getResume) {
+  selectResume.addEventListener('change', async () => {
+    const id = selectResume.value;
+    if (!id || !inputResume) return;
+    try {
+      const data = await window.floatingAPI.getResume(id);
+      if (data.textSummary) inputResume.value = data.textSummary;
+    } catch (_) {}
+  });
+}
+
+if (btnUploadResume && resumeFileInput && window.floatingAPI?.uploadResume) {
+  btnUploadResume.addEventListener('click', () => resumeFileInput.click());
+  resumeFileInput.addEventListener('change', async () => {
+    const file = resumeFileInput.files && resumeFileInput.files[0];
+    if (!file) return;
+    btnUploadResume.disabled = true;
+    try {
+      const base64 = await fileToBase64(file);
+      const textSummary = (inputResume && inputResume.value) ? inputResume.value.trim() : '';
+      const result = await window.floatingAPI.uploadResume({
+        fileBase64: base64,
+        fileName: file.name || 'resume.pdf',
+        name: file.name || 'Resume',
+        textSummary,
+        mimeType: file.type || 'application/octet-stream',
+      });
+      if (result.error) return;
+      await refreshResumesList();
+      if (selectResume && result.id) {
+        selectResume.value = result.id;
+        if (textSummary && inputResume) inputResume.value = textSummary;
+      }
+    } catch (_) {}
+    finally {
+      btnUploadResume.disabled = false;
+      resumeFileInput.value = '';
+    }
+  });
+}
 
 if (btnMinimize && window.floatingAPI?.launcherMinimizeToIcon) {
   btnMinimize.addEventListener('click', async () => {
