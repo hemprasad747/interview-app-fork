@@ -563,6 +563,36 @@ html, body {
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+/* Question block above Answer (like reference: Question then Answer) */
+.ai-response-question-wrap {
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+.ai-response-question-wrap.hidden {
+  display: none !important;
+}
+.qa-label-question {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.qa-label-icon-question {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  flex-shrink: 0;
+}
+.ai-response-question {
+  margin-top: 6px;
+  padding: 0;
+  color: #e0e0e0;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Answer: one combined section, no border lines */
 .qa-section {
   flex: 1;
@@ -688,6 +718,30 @@ html, body {
   padding: 0;
   background: transparent;
 }
+.ai-response-text pre {
+  margin: 12px 0;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  overflow-x: auto;
+}
+.ai-response-text pre code {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 0;
+  background: transparent;
+}
+.ai-response-text h1, .ai-response-text h2, .ai-response-text h3 {
+  margin: 14px 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #f0f0f0;
+}
+.ai-response-text h1:first-child, .ai-response-text h2:first-child, .ai-response-text h3:first-child {
+  margin-top: 0;
+}
 
 .ai-response-loading {
   color: #aaa;
@@ -762,6 +816,15 @@ html, body {
 }
 
 .history-item-q {
+  word-break: break-word;
+}
+
+.history-item-a {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  color: #b8b8b8;
+  font-size: 11px;
   word-break: break-word;
 }
 
@@ -1308,6 +1371,11 @@ html.launcher-doc.launcher-window-minimized,
 .launcher-buy-credits { margin-left: 6px; font-size: 11px; }
 .launcher-credits-badge svg { flex-shrink: 0; }
 .launcher-session-type-subtitle { color: var(--text-muted); font-size: 12px; margin-bottom: 12px; }
+.launcher-speech-provider-heading { font-size: 14px; font-weight: 600; margin-top: 20px; margin-bottom: 4px; }
+.launcher-free-cooldown { display: block; font-size: 12px; color: var(--launcher-accent); margin-top: 6px; font-weight: 500; }
+.launcher-free-cooldown.hidden { display: none !important; }
+.launcher-option-disabled { opacity: 0.7; pointer-events: none; }
+.launcher-option-disabled input { cursor: not-allowed; }
 
 .launcher-minimized-view {
   position: absolute;

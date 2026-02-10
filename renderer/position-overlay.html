@@ -75,16 +75,40 @@
         if (window.floatingAPI?.closePositionOverlay) window.floatingAPI.closePositionOverlay();
       }
 
-      backdropEl.addEventListener('click', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      });
+      (function() {
+        var downX = 0, downY = 0;
+        var moved = false;
+        var allowCloseOnNextClick = false;
+        backdropEl.addEventListener('mousedown', function(e) {
+          if (e.button !== 0) return;
+          downX = e.clientX;
+          downY = e.clientY;
+          moved = false;
+          allowCloseOnNextClick = true;
+        });
+        backdropEl.addEventListener('mouseleave', function() {
+          allowCloseOnNextClick = false;
+        });
+        backdropEl.addEventListener('mousemove', function(e) {
+          if (e.buttons !== 1) return;
+          if (Math.abs(e.clientX - downX) > 5 || Math.abs(e.clientY - downY) > 5) moved = true;
+        });
+        backdropEl.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var shouldClose = e.button === 0 && !moved && allowCloseOnNextClick;
+          allowCloseOnNextClick = false;
+          if (!shouldClose) return;
+          close();
+        });
+      })();
 
       document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
           e.preventDefault();
-          close();
+          // Do not close on Escape - OS/screenshot tools often send Escape when
+          // capture ends, which was closing the overlay. Close only via backdrop
+          // or zone click.
         }
       });
 

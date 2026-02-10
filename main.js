@@ -106,6 +106,7 @@ let historyPanelVisible = false;
 let snakeBarVisible = false;
 
 let sessionConversationHistory = [];
+let sessionInterviewSummary = '';
 let sessionTranscriptHistory = [];
 let sessionLiveTranscript = { mic: '', system: '' };
 let sessionTimerSeconds = 0;
@@ -114,9 +115,45 @@ let sessionActive = false;
 let sessionMinimized = false;
 /** Session context from launcher: { company, position, resume, language, instructions } */
 let sessionConfig = {};
+let pendingAskQuestion = null;
+
+// Periodically ensure session windows are visible. On Windows, certain OS-level
+// actions (like screenshot tools) can temporarily hide or blank always-on-top
+// windows even without our code explicitly hiding them. This watchdog restores
+// visibility if the session is active and not minimized.
+const SESSION_VISIBILITY_CHECK_MS = 1000;
+setInterval(() => {
+  if (!sessionActive || sessionMinimized) return;
+  if (!barWindow || barWindow.isDestroyed()) return;
+  try {
+    barWindow.show();
+    try { barWindow.setOpacity(1); } catch (_) {}
+  } catch (_) {}
+  try {
+    if (historyPanelVisible && leftWindow && !leftWindow.isDestroyed()) {
+      leftWindow.show();
+      try { leftWindow.setOpacity(1); } catch (_) {}
+    }
+  } catch (_) {}
+  try {
+    if (rightWindow && !rightWindow.isDestroyed()) {
+      rightWindow.show();
+      try { rightWindow.setOpacity(1); } catch (_) {}
+    }
+  } catch (_) {}
+  try {
+    if (snakeBarVisible && snakeBarWindow && !snakeBarWindow.isDestroyed()) {
+      snakeBarWindow.show();
+      try { snakeBarWindow.setOpacity(1); } catch (_) {}
+    }
+  } catch (_) {}
+}, SESSION_VISIBILITY_CHECK_MS);
 
 const SESSION_POSITIONS = ['top-left', 'top', 'top-right', 'left', 'center', 'right', 'bottom-left', 'bottom', 'bottom-right'];
 let sessionPosition = 'top';
+
+// Electron's "Render frame was disposed" from webContents.send() cannot be caught by try/catch or uncaughtException.
+// We rely on webContents.once('render-process-gone') and 'destroyed' to clear the session timer and barWindow.
 
 const LAUNCHER_SIZE = 52;
 const LAUNCHER_MARGIN = 10;
@@ -255,8 +292,6 @@ function applySessionLayout() {
   }
   if (rightWindow && !rightWindow.isDestroyed()) {
     rightWindow.setBounds(layout.right);
-    const inverted = BOTTOM_POSITIONS.includes(sessionPosition);
-    rightWindow.webContents.send('layout-inverted', inverted);
   }
 }
 
@@ -320,18 +355,29 @@ function createAndShowPositionOverlayWindow() {
     show: false,
     backgroundColor: '#00000000',
   });
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    try { positionOverlayWindow.setContentProtection(true); } catch (_) {}
+  }
   positionOverlayWindow.setMenuBarVisibility(false);
   positionOverlayWindow.loadFile(path.join(__dirname, 'renderer', 'position-overlay.html'));
   positionOverlayWindow.on('closed', () => {
+    // If the overlay is closed without going through our IPC handler,
+    // make sure the session UI is restored so the app doesn't appear
+    // to disappear after things like OS screenshot tools.
+    restoreSessionAfterOverlayClosed();
     positionOverlayWindow = null;
   });
   positionOverlayWindow.once('ready-to-show', () => {
     if (positionOverlayWindow && !positionOverlayWindow.isDestroyed()) {
-      if (process.platform === 'win32' || process.platform === 'darwin') {
-        positionOverlayWindow.setContentProtection(true);
-      }
       positionOverlayWindow.show();
       positionOverlayWindow.focus();
+    }
+  });
+  positionOverlayWindow.on('hide', () => {
+    // If the OS or snipping tool hides our overlay, close it so the 'closed'
+    // handler restores the session and the app does not appear to disappear.
+    if (positionOverlayWindow && !positionOverlayWindow.isDestroyed()) {
+      positionOverlayWindow.close();
     }
   });
 }
@@ -347,7 +393,6 @@ function showPositionOverlayWindow() {
   if (rightWindow && !rightWindow.isDestroyed()) rightWindow.hide();
   if (snakeBarWindow && !snakeBarWindow.isDestroyed()) snakeBarWindow.hide();
   if (barWindow && !barWindow.isDestroyed()) {
-    barWindow.webContents.send('session-minimized');
     const doAfterFade = () => {
       if (barWindow && !barWindow.isDestroyed()) barWindow.setBounds(BAR_MINIMIZED_BOUNDS);
       if (barWindow && !barWindow.isDestroyed()) try { barWindow.setOpacity(1); } catch (_) {}
@@ -388,6 +433,25 @@ function closePositionOverlayWindow() {
     positionOverlayWindow.close();
     positionOverlayWindow = null;
   }
+}
+
+function restoreSessionAfterOverlayClosed() {
+  // If the session was minimized to show the position overlay and the overlay
+  // window gets closed externally (for example by the OS or user), make sure
+  // we restore the session UI instead of leaving everything hidden.
+  if (!sessionMinimized || !sessionActive || !barWindow || barWindow.isDestroyed()) return;
+
+  sessionMinimized = false;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setBounds({ x: -10000, y: -10000, width: 52, height: 52 });
+    mainWindow.hide();
+    try { mainWindow.setOpacity(1); } catch (_) {}
+  }
+  if (barWindow && !barWindow.isDestroyed()) {
+    try { barWindow.setOpacity(0); } catch (_) {}
+  }
+  expandPending = true;
+  expandFallbackTimer = setTimeout(() => finishExpandSession(undefined), 150);
 }
 
 function setupSessionHandlers(win) {
@@ -431,13 +495,31 @@ function createSessionWindows() {
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
+      partition: 'session-bar',
     },
     show: false,
     backgroundColor: '#00000000',
   });
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    try { barWindow.setContentProtection(true); } catch (_) {}
+  }
   barWindow.setMenuBarVisibility(false);
   barWindow.loadFile(path.join(__dirname, 'renderer', 'bar.html'));
   setupSessionHandlers(barWindow);
+  barWindow.webContents.once('destroyed', () => {
+    if (sessionTimerIntervalId) {
+      clearInterval(sessionTimerIntervalId);
+      sessionTimerIntervalId = null;
+    }
+    barWindow = null;
+  });
+  barWindow.webContents.once('render-process-gone', () => {
+    if (sessionTimerIntervalId) {
+      clearInterval(sessionTimerIntervalId);
+      sessionTimerIntervalId = null;
+    }
+    barWindow = null;
+  });
 
   leftWindow = new BrowserWindow({
     ...layout.left,
@@ -452,13 +534,19 @@ function createSessionWindows() {
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
+      partition: 'session-left',
     },
     show: false,
     backgroundColor: '#00000000',
   });
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    try { leftWindow.setContentProtection(true); } catch (_) {}
+  }
   leftWindow.setMenuBarVisibility(false);
   leftWindow.loadFile(path.join(__dirname, 'renderer', 'left.html'));
   setupSessionHandlers(leftWindow);
+  leftWindow.webContents.once('destroyed', () => { leftWindow = null; });
+  leftWindow.webContents.once('render-process-gone', () => { leftWindow = null; });
 
   rightWindow = new BrowserWindow({
     ...layout.right,
@@ -475,13 +563,19 @@ function createSessionWindows() {
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
+      partition: 'session-right',
     },
     show: false,
     backgroundColor: '#00000000',
   });
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    try { rightWindow.setContentProtection(true); } catch (_) {}
+  }
   rightWindow.setMenuBarVisibility(false);
   rightWindow.loadFile(path.join(__dirname, 'renderer', 'right.html'));
   setupSessionHandlers(rightWindow);
+  rightWindow.webContents.once('destroyed', () => { rightWindow = null; });
+  rightWindow.webContents.once('render-process-gone', () => { rightWindow = null; });
 
   snakeBarWindow = new BrowserWindow({
     ...OFFSCREEN,
@@ -496,21 +590,21 @@ function createSessionWindows() {
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
+      partition: 'session-snake',
     },
     show: false,
     backgroundColor: '#00000000',
   });
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    try { snakeBarWindow.setContentProtection(true); } catch (_) {}
+  }
   snakeBarWindow.setMenuBarVisibility(false);
   snakeBarWindow.loadFile(path.join(__dirname, 'renderer', 'snake-bar.html'));
   setupSessionHandlers(snakeBarWindow);
+  snakeBarWindow.webContents.once('destroyed', () => { snakeBarWindow = null; });
+  snakeBarWindow.webContents.once('render-process-gone', () => { snakeBarWindow = null; });
 
   barWindow.once('ready-to-show', () => {
-    if (process.platform === 'win32' || process.platform === 'darwin') {
-      if (barWindow && !barWindow.isDestroyed()) barWindow.setContentProtection(true);
-      if (leftWindow && !leftWindow.isDestroyed()) leftWindow.setContentProtection(true);
-      if (rightWindow && !rightWindow.isDestroyed()) rightWindow.setContentProtection(true);
-      if (snakeBarWindow && !snakeBarWindow.isDestroyed()) snakeBarWindow.setContentProtection(true);
-    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setBounds({ x: -10000, y: -10000, width: 52, height: 52 });
       mainWindow.hide();
@@ -613,7 +707,9 @@ function createWindow() {
     show: false,
     backgroundColor: '#00000000',
   });
-
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    try { mainWindow.setContentProtection(true); } catch (_) {}
+  }
   mainWindow.setMenuBarVisibility(false);
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'launcher.html'));
 
@@ -641,9 +737,6 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    if (process.platform === 'win32' || process.platform === 'darwin') {
-      mainWindow.setContentProtection(true);
-    }
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
@@ -675,7 +768,9 @@ ipcMain.handle('start-session', (_event, config) => {
   }
   if (sessionActive) return;
   sessionActive = true;
+  snakeBarVisible = true;
   sessionConversationHistory = [];
+  sessionInterviewSummary = '';
   sessionTranscriptHistory = [];
   sessionLiveTranscript = { mic: '', system: '' };
   sessionTimerSeconds = 0;
@@ -686,9 +781,7 @@ ipcMain.handle('start-session', (_event, config) => {
   createSessionWindows();
   sessionTimerIntervalId = setInterval(() => {
     sessionTimerSeconds++;
-    if (barWindow && !barWindow.isDestroyed()) {
-      barWindow.webContents.send('timer-tick', sessionTimerSeconds);
-    }
+    // Do not send timer-tick to barWindow; bar polls getTimer() instead to avoid "Render frame was disposed" when bar's frame is gone
   }, 1000);
 });
 
@@ -729,7 +822,6 @@ ipcMain.handle('collapse-session', () => {
   if (rightWindow && !rightWindow.isDestroyed()) rightWindow.hide();
   if (snakeBarWindow && !snakeBarWindow.isDestroyed()) snakeBarWindow.hide();
   if (barWindow && !barWindow.isDestroyed()) {
-    barWindow.webContents.send('session-minimized');
     const doAfterFade = () => {
       if (barWindow && !barWindow.isDestroyed()) barWindow.setBounds(BAR_MINIMIZED_BOUNDS);
       if (barWindow && !barWindow.isDestroyed()) try { barWindow.setOpacity(1); } catch (_) {}
@@ -794,7 +886,6 @@ ipcMain.on('manual-state', (_event, expanded) => {
 ipcMain.handle('expand-session', () => {
   if (!sessionActive || !barWindow || barWindow.isDestroyed()) return;
   sessionMinimized = false;
-  if (barWindow && !barWindow.isDestroyed()) barWindow.webContents.send('session-expanded');
   if (mainWindow && !mainWindow.isDestroyed()) {
     expandPending = true;
     const doExpand = () => {
@@ -832,6 +923,28 @@ ipcMain.handle('get-transcript-history', () => sessionTranscriptHistory);
 ipcMain.handle('get-live-transcript', () => ({ ...sessionLiveTranscript }));
 ipcMain.handle('get-timer', () => sessionTimerSeconds);
 
+function safeSend(win, channel, ...args) {
+  try {
+    if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+      win.webContents.send(channel, ...args);
+    }
+  } catch (e) {
+    if (win === barWindow) {
+      if (sessionTimerIntervalId) {
+        clearInterval(sessionTimerIntervalId);
+        sessionTimerIntervalId = null;
+      }
+      barWindow = null;
+    } else if (win === leftWindow) {
+      leftWindow = null;
+    } else if (win === rightWindow) {
+      rightWindow = null;
+    } else if (win === snakeBarWindow) {
+      snakeBarWindow = null;
+    }
+  }
+}
+
 ipcMain.handle('set-live-transcript', (_event, { source, text, isFinal }) => {
   if (source !== 'mic' && source !== 'system') return;
   if (isFinal) {
@@ -839,20 +952,14 @@ ipcMain.handle('set-live-transcript', (_event, { source, text, isFinal }) => {
   } else {
     sessionLiveTranscript[source] = typeof text === 'string' ? text : '';
   }
-  if (leftWindow && !leftWindow.isDestroyed()) {
-    leftWindow.webContents.send('live-transcript-updated');
-  }
-  if (snakeBarWindow && !snakeBarWindow.isDestroyed()) {
-    snakeBarWindow.webContents.send('live-transcript-updated');
-  }
+  // Do not push to left/snake (avoids "Render frame was disposed"); they poll getLiveTranscript() instead
 });
 
 ipcMain.handle('clear-history', () => {
   sessionConversationHistory = [];
+  sessionInterviewSummary = '';
   sessionTranscriptHistory = [];
   sessionLiveTranscript = { mic: '', system: '' };
-  if (leftWindow && !leftWindow.isDestroyed()) leftWindow.webContents.send('history-updated');
-  if (snakeBarWindow && !snakeBarWindow.isDestroyed()) snakeBarWindow.webContents.send('history-updated');
 });
 
 function isNoiseTranscript(text) {
@@ -877,21 +984,34 @@ ipcMain.handle('append-transcript', (_event, item) => {
   if (sessionTranscriptHistory.length > MAX_TRANSCRIPT_HISTORY) {
     sessionTranscriptHistory = sessionTranscriptHistory.slice(-MAX_TRANSCRIPT_HISTORY);
   }
-  if (leftWindow && !leftWindow.isDestroyed()) leftWindow.webContents.send('history-updated');
-  if (snakeBarWindow && !snakeBarWindow.isDestroyed()) snakeBarWindow.webContents.send('history-updated');
 });
+
+const MAX_CONVERSATION_PAIRS = 6;
+const INTERVIEW_SUMMARY_MAX_CHARS = 320;
 
 ipcMain.handle('append-conversation', (_event, userContent, assistantContent) => {
   const now = new Date();
   sessionConversationHistory.push({ role: 'user', content: userContent, time: now });
   sessionConversationHistory.push({ role: 'assistant', content: assistantContent, time: now });
-  const MAX = 10;
-  if (sessionConversationHistory.length > MAX * 2) {
-    sessionConversationHistory = sessionConversationHistory.slice(-MAX * 2);
+  if (sessionConversationHistory.length > MAX_CONVERSATION_PAIRS * 2) {
+    sessionConversationHistory = sessionConversationHistory.slice(-MAX_CONVERSATION_PAIRS * 2);
   }
-  if (leftWindow && !leftWindow.isDestroyed()) leftWindow.webContents.send('history-updated');
-  if (snakeBarWindow && !snakeBarWindow.isDestroyed()) snakeBarWindow.webContents.send('history-updated');
+  const pairs = [];
+  for (let i = 0; i < sessionConversationHistory.length; i += 2) {
+    const u = sessionConversationHistory[i];
+    const a = sessionConversationHistory[i + 1];
+    if (u?.content && a?.content) pairs.push({ q: u.content, a: a.content });
+  }
+  const last3 = pairs.slice(-3);
+  sessionInterviewSummary = last3
+    .map((p) => 'Q: ' + (p.q || '').trim().split(/\s+/).slice(0, 10).join(' ') + ' A: ' + (p.a || '').trim().split(/\s+/).slice(0, 8).join(' '))
+    .join('; ');
+  if (sessionInterviewSummary.length > INTERVIEW_SUMMARY_MAX_CHARS) {
+    sessionInterviewSummary = sessionInterviewSummary.slice(-INTERVIEW_SUMMARY_MAX_CHARS);
+  }
 });
+
+ipcMain.handle('get-interview-summary', () => sessionInterviewSummary);
 
 ipcMain.handle('get-right-panel-bounds', (event) => {
   if (!rightWindow || rightWindow.isDestroyed()) return null;
@@ -904,13 +1024,12 @@ ipcMain.handle('get-layout-inverted', () => BOTTOM_POSITIONS.includes(sessionPos
 ipcMain.handle('toggle-history-panel', () => {
   historyPanelVisible = !historyPanelVisible;
   applySessionLayout();
-  if (barWindow && !barWindow.isDestroyed()) {
-    barWindow.webContents.send('history-visible-changed', historyPanelVisible);
-  }
   return historyPanelVisible;
 });
 
 ipcMain.handle('get-history-visible', () => historyPanelVisible);
+
+ipcMain.handle('getSessionMinimized', () => sessionMinimized);
 
 ipcMain.handle('set-snake-bar-visible', (_event, visible) => {
   snakeBarVisible = !!visible;
@@ -922,9 +1041,6 @@ ipcMain.handle('get-snake-bar-visible', () => snakeBarVisible);
 ipcMain.handle('set-history-panel-visible', (_event, visible) => {
   historyPanelVisible = !!visible;
   applySessionLayout();
-  if (barWindow && !barWindow.isDestroyed()) {
-    barWindow.webContents.send('history-visible-changed', historyPanelVisible);
-  }
   return historyPanelVisible;
 });
 
@@ -939,9 +1055,14 @@ ipcMain.handle('set-right-panel-bounds', (_event, { x, y, width, height }) => {
 });
 
 ipcMain.handle('request-ai-question', (_event, q) => {
-  if (rightWindow && !rightWindow.isDestroyed() && q) {
-    rightWindow.webContents.send('ask-question', q);
-  }
+  if (!q || typeof q !== 'string') return;
+  pendingAskQuestion = q;
+});
+
+ipcMain.handle('getPendingAskQuestion', () => {
+  const q = pendingAskQuestion;
+  pendingAskQuestion = null;
+  return q;
 });
 
 ipcMain.handle('set-manual-mode', (_event, expanded) => {
@@ -956,7 +1077,6 @@ ipcMain.handle('move-session-to-position', (_event, position) => {
   closePositionOverlayWindow();
   if (sessionMinimized && sessionActive && barWindow && !barWindow.isDestroyed()) {
     sessionMinimized = false;
-    barWindow.webContents.send('session-expanded');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setBounds({ x: -10000, y: -10000, width: 52, height: 52 });
       mainWindow.hide();
@@ -980,7 +1100,6 @@ ipcMain.on('close-position-overlay', () => {
   closePositionOverlayWindow();
   if (sessionMinimized && sessionActive && barWindow && !barWindow.isDestroyed()) {
     sessionMinimized = false;
-    barWindow.webContents.send('session-expanded');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setBounds({ x: -10000, y: -10000, width: 52, height: 52 });
       mainWindow.hide();
@@ -1030,6 +1149,42 @@ ipcMain.handle('get-azure-speech-config', async () => {
 
 ipcMain.handle('get-session-config', () => sessionConfig);
 ipcMain.handle('is-session-active', () => sessionActive);
+
+function getSpeechProvider() {
+  const fromSession = sessionConfig?.speechProvider;
+  if (fromSession === 'deepgram' || fromSession === 'azure') return fromSession;
+  const fromEnv = (process.env.SPEECH_PROVIDER || '').toLowerCase();
+  if (fromEnv === 'deepgram' || fromEnv === 'azure') return fromEnv;
+  return 'deepgram';
+}
+ipcMain.handle('get-speech-provider', () => getSpeechProvider());
+
+ipcMain.handle('get-deepgram-streaming-config', async () => {
+  const language = (sessionConfig.language || 'en-US').trim() || 'en-US';
+  const isFull = (sessionConfig.sessionType || '').toString().toLowerCase() === 'full';
+  let url = `${API_BASE}/deepgramStreamingConfig?language=${encodeURIComponent(language)}`;
+  if (isFull) url += '&mode=full';
+  const auth = getAuthData();
+  const headers = auth?.token ? { Authorization: `Bearer ${auth.token}` } : {};
+  try {
+    const res = await fetch(url, { headers: Object.keys(headers).length ? headers : undefined });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.apiKey) {
+      return { apiKey: data.apiKey, language: data.language || language };
+    }
+    if (res.status === 403 && data.code === 'FREE_SESSION_COOLDOWN') {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('free-session-cooldown', {
+          message: data.error || 'Please wait 5 minutes before starting another free session.',
+          waitSeconds: data.waitSeconds || 300,
+        });
+      }
+      return { error: data.error, code: 'FREE_SESSION_COOLDOWN', waitSeconds: data.waitSeconds || 300 };
+    }
+    if (data.error) return { error: data.error };
+  } catch (_) {}
+  return null;
+});
 
 let authWindow = null;
 ipcMain.handle('open-auth-url', () => {
@@ -1300,7 +1455,7 @@ ipcMain.handle('call-ai', async (_event, { transcript, systemPrompt }) => {
       { role: 'system', content: systemPrompt },
       { role: 'user', content: transcript },
     ],
-    max_tokens: 160,
+    max_tokens: 512,
     temperature: 0.2,
     top_p: 1,
   };
@@ -1342,7 +1497,7 @@ ipcMain.handle('call-ai-stream', async (event, { messages }) => {
     sender.send('ai-stream-error', 'Messages required.');
     return;
   }
-  const body = { messages, max_tokens: 160, temperature: 0.2, top_p: 1 };
+  const body = { messages, max_tokens: 512, temperature: 0.2, top_p: 1 };
   const auth = getAuthData();
   const headers = { 'Content-Type': 'application/json' };
   if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
@@ -1446,7 +1601,7 @@ ipcMain.handle('call-ai-stream', async (event, { messages }) => {
   }
 });
 
-// Transcribe audio via Azure Speech REST (Whisper fallback)
+// Transcribe audio via Azure or Deepgram (Whisper fallback path)
 ipcMain.handle('transcribe-audio', async (event, base64Audio, mimeType = 'audio/webm') => {
   if (!base64Audio || typeof base64Audio !== 'string') return { error: 'Audio data required.' };
   const buffer = Buffer.from(base64Audio, 'base64');
@@ -1455,33 +1610,61 @@ ipcMain.handle('transcribe-audio', async (event, base64Audio, mimeType = 'audio/
   const auth = getAuthData();
   const headers = { 'Content-Type': 'application/json' };
   if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
-  try {
-    const res = await fetch(`${API_BASE}/speechTranscribe`, {
+  const provider = getSpeechProvider();
+
+  const tryDeepgram = async () => {
+    const t0 = Date.now();
+    const res = await fetch(`${API_BASE}/deepgramTranscribe`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ audio: base64Audio, language }),
     });
+    const ms = Date.now() - t0;
     const data = await res.json();
+    if (process.env.NODE_ENV !== 'production') console.log(`[transcribe] deepgram ${ms}ms`);
     if (data.text) return { text: data.text };
     if (data.error) return { error: data.error };
-  } catch (_) { /* fallback */ }
-  // Fallback: local env
-  const azureKey = process.env.AZURE_SPEECH_KEY;
-  const azureRegion = process.env.AZURE_SPEECH_REGION || 'eastus';
-  if (!azureKey || !azureRegion) return { error: 'AZURE_SPEECH_KEY and AZURE_SPEECH_REGION required.' };
-  try {
-    const url = `https://${azureRegion}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=${encodeURIComponent(language)}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Ocp-Apim-Subscription-Key': azureKey, 'Content-Type': 'audio/webm', Accept: 'application/json' },
-      body: buffer,
-    });
-    const data = await res.json();
-    if (data.RecognitionStatus === 'Success' && data.DisplayText) return { text: data.DisplayText };
-    return { error: data.RecognitionStatus === 'NoMatch' ? 'No speech detected' : (data.RecognitionStatus || 'Failed') };
-  } catch (e) {
-    return { error: e.message };
+    return null;
+  };
+
+  const tryAzure = async () => {
+    const t0 = Date.now();
+    try {
+      const res = await fetch(`${API_BASE}/speechTranscribe`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ audio: base64Audio, language }),
+      });
+      const data = await res.json();
+      const ms = Date.now() - t0;
+      if (process.env.NODE_ENV !== 'production') console.log(`[transcribe] azure ${ms}ms`);
+      if (data.text) return { text: data.text };
+      if (data.error) return { error: data.error };
+    } catch (_) { /* fallback */ }
+    const azureKey = process.env.AZURE_SPEECH_KEY;
+    const azureRegion = process.env.AZURE_SPEECH_REGION || 'eastus';
+    if (!azureKey || !azureRegion) return { error: 'AZURE_SPEECH_KEY and AZURE_SPEECH_REGION required.' };
+    try {
+      const url = `https://${azureRegion}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=${encodeURIComponent(language)}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Ocp-Apim-Subscription-Key': azureKey, 'Content-Type': 'audio/webm', Accept: 'application/json' },
+        body: buffer,
+      });
+      const data = await res.json();
+      if (data.RecognitionStatus === 'Success' && data.DisplayText) return { text: data.DisplayText };
+      return { error: data.RecognitionStatus === 'NoMatch' ? 'No speech detected' : (data.RecognitionStatus || 'Failed') };
+    } catch (e) {
+      return { error: e.message };
+    }
+  };
+
+  if (provider === 'deepgram') {
+    const result = await tryDeepgram();
+    if (result) return result;
+    return await tryAzure();
   }
+  return await tryAzure();
 });
 
 ipcMain.handle('analyze-image', async (_event, { imageBase64, prompt }) => {

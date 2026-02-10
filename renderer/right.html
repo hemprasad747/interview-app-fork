@@ -16,6 +16,13 @@
   <div class="panel-right-standalone">
     <div id="response-area" class="panel-body">
       <div class="qa-section">
+        <div id="ai-response-question-wrap" class="ai-response-question-wrap hidden">
+          <span class="qa-label qa-label-question">
+            <span class="qa-label-icon qa-label-icon-question" aria-hidden="true"></span>
+            Question:
+          </span>
+          <div id="ai-response-question" class="ai-response-question"></div>
+        </div>
         <div class="qa-section-header">
           <span class="qa-label">Answer:</span>
           <div class="qa-nav" title="Browse previous answers">
@@ -37,6 +44,7 @@
     </div>
   </div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js" crossorigin="anonymous"></script>
   <script src="right.js"></script>
 </body>
 </html>

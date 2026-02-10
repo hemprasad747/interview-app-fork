@@ -35,6 +35,62 @@ const updateBannerText = document.getElementById('update-banner-text');
 const btnRestartForUpdate = document.getElementById('btn-restart-for-update');
 const creditsBadgeText = document.getElementById('credits-badge-text');
 const btnBuyCredits = document.getElementById('btn-buy-credits');
+const freeSessionCooldownEl = document.getElementById('free-session-cooldown');
+const freeSessionOption = document.getElementById('free-session-option');
+const freeSessionRadio = document.querySelector('input[name="session-type"][value="free"]');
+
+const FREE_SESSION_COOLDOWN_KEY = 'alphaview_free_cooldown_end';
+let freeSessionCooldownEndMs = 0;
+let freeSessionCooldownInterval = null;
+
+function formatCooldownRemaining(ms) {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+function updateFreeSessionCooldownUI() {
+  const now = Date.now();
+  if (freeSessionCooldownEndMs <= now) {
+    freeSessionCooldownEndMs = 0;
+    try { localStorage.removeItem(FREE_SESSION_COOLDOWN_KEY); } catch (_) {}
+    if (freeSessionCooldownEl) {
+      freeSessionCooldownEl.textContent = '';
+      freeSessionCooldownEl.classList.add('hidden');
+    }
+    if (freeSessionRadio) freeSessionRadio.disabled = false;
+    if (freeSessionOption) freeSessionOption.classList.remove('launcher-option-disabled');
+    if (freeSessionCooldownInterval) {
+      clearInterval(freeSessionCooldownInterval);
+      freeSessionCooldownInterval = null;
+    }
+    updateStartSessionButton();
+    return;
+  }
+  const remaining = freeSessionCooldownEndMs - now;
+  if (freeSessionCooldownEl) {
+    freeSessionCooldownEl.textContent = 'Cooldown: ' + formatCooldownRemaining(remaining) + ' left';
+    freeSessionCooldownEl.classList.remove('hidden');
+  }
+  if (freeSessionRadio) {
+    freeSessionRadio.disabled = true;
+    if (freeSessionRadio.checked && document.querySelector('input[name="session-type"][value="full"]')) {
+      document.querySelector('input[name="session-type"][value="full"]').checked = true;
+    }
+  }
+  if (freeSessionOption) freeSessionOption.classList.add('launcher-option-disabled');
+  updateStartSessionButton();
+}
+
+function startFreeSessionCooldown(waitSeconds) {
+  freeSessionCooldownEndMs = Date.now() + (waitSeconds || 300) * 1000;
+  try { localStorage.setItem(FREE_SESSION_COOLDOWN_KEY, String(freeSessionCooldownEndMs)); } catch (_) {}
+  updateFreeSessionCooldownUI();
+  if (!freeSessionCooldownInterval) {
+    freeSessionCooldownInterval = setInterval(updateFreeSessionCooldownUI, 1000);
+  }
+}
 
 let currentStep = 0;
 let sessionMinimized = false;
@@ -119,6 +175,7 @@ function showStep(step) {
   if (step1) step1.classList.toggle('active', step === 1);
   if (step2) step2.classList.toggle('active', step === 2);
   if (step3) step3.classList.toggle('active', step === 3);
+  if (step === 3) updateFreeSessionCooldownUI();
   if (step === 3) updateStartSessionButton();
   if (step === 1) refreshResumesList();
   if (window.floatingAPI?.launcherSetStepSize) window.floatingAPI.launcherSetStepSize(step);
@@ -231,9 +288,10 @@ function updateStartSessionButton() {
   if (!btnStartSession) return;
   const sessionTypeRadio = document.querySelector('input[name="session-type"]:checked');
   const isFull = sessionTypeRadio?.value === 'full';
-  const canStart = isFull ? userCreditsMinutes >= FULL_CREDITS_MIN_REQUIRED : true;
+  const freeOnCooldown = sessionTypeRadio?.value === 'free' && freeSessionCooldownEndMs > Date.now();
+  const canStart = freeOnCooldown ? false : (isFull ? userCreditsMinutes >= FULL_CREDITS_MIN_REQUIRED : true);
   btnStartSession.disabled = !canStart;
-  btnStartSession.title = isFull && !canStart ? 'Full interview requires at least 1 min of credits' : '';
+  btnStartSession.title = freeOnCooldown ? 'Free session is on cooldown' : (isFull && !canStart ? 'Full interview requires at least 1 min of credits' : '');
 }
 
 if (document.querySelectorAll('input[name="session-type"]').length) {
@@ -247,6 +305,8 @@ btnStartSession.addEventListener('click', () => {
   const sessionTypeRadio = document.querySelector('input[name="session-type"]:checked');
   const sessionType = sessionTypeRadio?.value === 'full' ? 'full' : 'free';
   const creditsMinutes = sessionType === 'free' ? 10 : Math.max(0, userCreditsMinutes);
+  const selectSpeechProvider = document.getElementById('select-speech-provider');
+  const speechProvider = (selectSpeechProvider?.value === 'azure' || selectSpeechProvider?.value === 'deepgram') ? selectSpeechProvider.value : 'azure';
   const config = {
     company: (inputCompany && inputCompany.value) ? inputCompany.value.trim() : '',
     position: (inputPosition && inputPosition.value) ? inputPosition.value.trim() : '',
@@ -255,6 +315,7 @@ btnStartSession.addEventListener('click', () => {
     instructions: (inputInstructions && inputInstructions.value) ? inputInstructions.value.trim() : '',
     sessionType,
     creditsMinutes,
+    speechProvider,
   };
   window.floatingAPI.startSession(config);
 });
@@ -334,9 +395,9 @@ window.addEventListener('focus', resetInactivityTimer);
 
 window.addEventListener('free-session-cooldown', (e) => {
   const d = e.detail || {};
-  const msg = d.message || 'Please wait 5 minutes before starting another free session.';
-  const mins = Math.ceil((d.waitSeconds || 300) / 60);
-  alert(mins > 0 ? `${msg}\n\n${mins} minute(s) remaining.` : msg);
+  const waitSeconds = d.waitSeconds || 300;
+  startFreeSessionCooldown(waitSeconds);
+  if (step3 && currentStep !== 3) showStep(3);
 });
 
 if (window.floatingAPI?.onSessionEnded) {
@@ -396,3 +457,16 @@ if (btnCheckUpdates && window.floatingAPI?.checkForUpdates) {
 showOnboarding();
 showStep(0);
 initAuth();
+try {
+  const stored = localStorage.getItem(FREE_SESSION_COOLDOWN_KEY);
+  if (stored) {
+    const end = parseInt(stored, 10);
+    if (end > Date.now()) {
+      freeSessionCooldownEndMs = end;
+      if (!freeSessionCooldownInterval) freeSessionCooldownInterval = setInterval(updateFreeSessionCooldownUI, 1000);
+      updateFreeSessionCooldownUI();
+    } else {
+      localStorage.removeItem(FREE_SESSION_COOLDOWN_KEY);
+    }
+  }
+} catch (_) {}

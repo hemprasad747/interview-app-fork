@@ -20,6 +20,10 @@ function formatTimePM(date) {
   return h12 + ':' + (m < 10 ? '0' : '') + m + ' ' + (am ? 'AM' : 'PM');
 }
 
+function normalizeQuestion(s) {
+  return (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 async function renderHistory() {
   if (!historyList) return;
   const conversation = await (window.floatingAPI?.getConversationHistory?.() || Promise.resolve([]));
@@ -29,17 +33,31 @@ async function renderHistory() {
   const items = [];
   const pairs = Math.floor(conversation.length / 2);
   const startPairs = Math.max(0, pairs - MAX_HISTORY_DISPLAY) * 2;
+  const answeredQuestions = new Set();
+  for (let i = startPairs; i < conversation.length; i += 2) {
+    const userMsg = conversation[i];
+    if (userMsg?.role === 'user' && userMsg?.content) {
+      answeredQuestions.add(normalizeQuestion(userMsg.content));
+    }
+  }
   for (let i = startPairs; i < conversation.length; i += 2) {
     const userMsg = conversation[i];
     const assistantMsg = conversation[i + 1];
     if (userMsg?.role !== 'user' || !assistantMsg) continue;
-    items.push({ text: (userMsg.content || '').trim() || '—', time: userMsg.time, source: 'qa' });
+    const qText = (userMsg.content || '').trim() || '—';
+    const qNorm = normalizeQuestion(qText);
+    let source = 'qa';
+    const matchingTranscript = transcript.find((t) => normalizeQuestion(t.text) === qNorm);
+    if (matchingTranscript) source = matchingTranscript.source || 'qa';
+    items.push({ text: qText, time: userMsg.time, source, answer: (assistantMsg.content || '').trim() });
   }
   for (const t of transcript) {
+    if (answeredQuestions.has(normalizeQuestion(t.text))) continue;
     items.push({
       text: t.text,
       time: t.time,
       source: t.source || 'mic',
+      answer: '',
     });
   }
   items.sort((a, b) => {
@@ -54,7 +72,7 @@ async function renderHistory() {
     const q = it.text || '—';
     const timeStr = formatTimePM(it.time);
     const label = it.source === 'system' ? 'Interviewer' : it.source === 'mic' ? 'You' : 'Q&A';
-    const canAsk = (it.source === 'mic' || it.source === 'system') && q.length > 3 && !q.startsWith('[');
+    const canAsk = (it.source === 'mic' || it.source === 'system') && q.length > 3 && !q.startsWith('[') && !it.answer;
     const isLeft = it.source === 'system';
     const sideClass = isLeft ? 'history-item-left' : 'history-item-right';
     const el = document.createElement('div');
@@ -112,6 +130,10 @@ if (window.floatingAPI?.onHistoryUpdated) {
 }
 if (window.floatingAPI?.onLiveTranscriptUpdated) {
   window.floatingAPI.onLiveTranscriptUpdated(() => renderHistory());
+}
+// Poll for live transcript so main never pushes (avoids disposed-frame errors)
+if (window.floatingAPI?.getLiveTranscript) {
+  setInterval(() => renderHistory(), 300);
 }
 
 renderHistory();

@@ -2,6 +2,8 @@ const aiPlaceholder = document.getElementById('ai-response-placeholder');
 const aiLoading = document.getElementById('ai-response-loading');
 const aiText = document.getElementById('ai-response-text');
 const aiError = document.getElementById('ai-response-error');
+const aiQuestionWrap = document.getElementById('ai-response-question-wrap');
+const aiQuestion = document.getElementById('ai-response-question');
 const responseResizeCorner = document.getElementById('response-resize-corner');
 const aiResponseWrap = document.getElementById('ai-response-wrap');
 const btnPrevAnswer = document.getElementById('btn-prev-answer');
@@ -9,24 +11,30 @@ const btnNextAnswer = document.getElementById('btn-next-answer');
 const answerCounter = document.getElementById('answer-counter');
 
 const MAX_HISTORY_MESSAGES = 10;
-const DEFAULT_SYSTEM_PROMPT = 'You are a helpful assistant. Answer in 1–3 short sentences. Use the conversation history to answer follow-up questions.';
+const DEFAULT_SYSTEM_PROMPT = 'You are the interviewee in a job interview. Always answer in first person as the candidate. Never act as an AI assistant: do not greet or offer to help; only answer the question asked. Never say you are an AI or assistant. Use the conversation history for follow-up questions.';
 let aiBusy = false;
 let currentAnswerIndex = 0;
 let liveAnswerContent = '';
+let liveQuestionContent = '';
 
-function buildSystemPrompt(config) {
+const LAST_PAIRS_FOR_REQUEST = 4;
+
+function buildSystemPrompt(config, interviewSummary) {
   if (!config || typeof config !== 'object') return DEFAULT_SYSTEM_PROMPT;
   const lang = (config.language || 'en-US').trim() || 'en-US';
   const parts = [
-    'You are an interview assistant helping the candidate answer questions during a job interview.',
-    `You must answer entirely in the language for locale "${lang}". All your responses must be in this language only.`,
+    'You are the interviewee (the candidate) in a job interview. You must ONLY answer as the candidate, in first person (I, my, me). Never act as an AI assistant: do not greet ("Good morning", "How can I help"), do not offer to help or ask "Is there something specific you would like to address". Never say you are an AI, a model, or an assistant. Only answer the interview question that was asked—do not initiate conversation or ask the user questions back.',
+    'Answer as if in a live interview: confident and relevant to the role. No meta-commentary or assistant-style phrasing.',
+    `Answer entirely in the language for locale "${lang}". All your responses must be in this language only.`,
   ];
-  if (config.company) parts.push(`Interview company: ${config.company}.`);
-  if (config.position) parts.push(`Position: ${config.position}.`);
-  if (config.resume) parts.push(`Candidate resume/summary:\n${config.resume}`);
-  if (config.instructions) parts.push(`Instructions for how to answer:\n${config.instructions}`);
-  parts.push('Keep answers concise (1–3 short sentences when possible). Use the conversation history to answer follow-up questions.');
-  parts.push('Format answers clearly: use **bold** for key terms, numbered lists (1. 2. 3.) for multiple points, bullet points (- or *) for lists, and fenced code blocks (```language then code then ```) for code examples.');
+  if (config.company) parts.push(`Company you are interviewing with: ${config.company}.`);
+  if (config.position) parts.push(`Role you are interviewing for: ${config.position}.`);
+  if (config.resume) parts.push(`Your resume/summary (this is you):\n${config.resume}`);
+  if (config.instructions) parts.push(`Additional guidance for how you should answer:\n${config.instructions}`);
+  if (interviewSummary && typeof interviewSummary === 'string' && interviewSummary.trim()) {
+    parts.push(`Brief context from earlier in this interview (use for follow-ups): ${interviewSummary.trim()}`);
+  }
+  parts.push('Give complete, sufficient answers. Use standard Markdown so the answer displays clearly: use **bold** for key terms, "- " or "* " at the start of a line for bullet lists, "1. " "2. " for numbered lists, and blank lines between paragraphs. Use ```language ... ``` for code. Use the conversation history and the brief context above for follow-up questions.');
   return parts.join('\n');
 }
 
@@ -35,64 +43,26 @@ function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+if (typeof window.marked !== 'undefined') {
+  window.marked.setOptions({ gfm: true, breaks: true });
+}
+
 function formatAnswer(text) {
   if (!text || typeof text !== 'string') return '';
-  const codeBlocks = [];
-  let processed = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    const escapedCode = escapeHtml(code.trimEnd());
-    const langClass = lang ? ` language-${lang}` : ' language-plaintext';
-    const idx = codeBlocks.length;
-    codeBlocks.push(`<pre class="ai-code-block"><code class="ai-code${langClass}">${escapedCode}</code></pre>`);
-    return `\n\x01CODE\x01${idx}\x01\n`;
-  });
-  const escaped = escapeHtml(processed);
-  let out = escaped
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\b__(.+?)__\b/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/\b_(.+?)_\b/g, '<em>$1</em>');
-  const lines = out.split('\n');
-  const result = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    const codeMatch = line.match(/\x01CODE\x01(\d+)\x01/);
-    if (codeMatch) {
-      result.push(codeBlocks[parseInt(codeMatch[1], 10)]);
-      i++;
-      continue;
+  if (typeof window.marked !== 'undefined') {
+    try {
+      const html = window.marked.parse(text.trim());
+      return html || escapeHtml(text).replace(/\n/g, '<br>');
+    } catch (_) {
+      return escapeHtml(text).replace(/\n/g, '<br>');
     }
-    const numMatch = line.match(/^(\d+)\.\s+(.*)$/);
-    const bulletMatch = line.match(/^[-*]\s+(.*)$/);
-    if (numMatch) {
-      const items = [];
-      while (i < lines.length && lines[i].match(/^\d+\.\s+/)) {
-        const m = lines[i].match(/^\d+\.\s+(.*)$/);
-        items.push('<li>' + m[1] + '</li>');
-        i++;
-      }
-      result.push('<ol>' + items.join('') + '</ol>');
-      continue;
-    }
-    if (bulletMatch) {
-      const items = [];
-      while (i < lines.length && lines[i].match(/^[-*]\s+/)) {
-        const m = lines[i].match(/^[-*]\s+(.*)$/);
-        items.push('<li>' + m[1] + '</li>');
-        i++;
-      }
-      result.push('<ul>' + items.join('') + '</ul>');
-      continue;
-    }
-    result.push(line ? '<p>' + line + '</p>' : '');
-    i++;
   }
-  return result.filter(Boolean).join('') || escaped.replace(/\n/g, '<br>');
+  return escapeHtml(text).replace(/\n/g, '<br>');
 }
 
 function applyHighlighting(container) {
   if (!container || !window.hljs) return;
-  container.querySelectorAll('pre code.ai-code').forEach((el) => {
+  container.querySelectorAll('pre code').forEach((el) => {
     try { window.hljs.highlightElement(el); } catch (_) {}
   });
 }
@@ -100,6 +70,30 @@ function applyHighlighting(container) {
 async function getAnswersFromHistory() {
   const history = await (window.floatingAPI?.getConversationHistory?.() || Promise.resolve([]));
   return history.filter((m) => m.role === 'assistant').map((m) => m.content).reverse();
+}
+
+/** Returns [{ question, answer }, ...] most recent first. */
+async function getAnswerPairsFromHistory() {
+  const history = await (window.floatingAPI?.getConversationHistory?.() || Promise.resolve([]));
+  const pairs = [];
+  for (let i = 0; i < history.length - 1; i += 2) {
+    if (history[i].role === 'user' && history[i + 1].role === 'assistant') {
+      pairs.push({ question: history[i].content, answer: history[i + 1].content });
+    }
+  }
+  return pairs.reverse();
+}
+
+function setQuestionBlock(text) {
+  if (!aiQuestionWrap || !aiQuestion) return;
+  const t = typeof text === 'string' ? text.trim() : '';
+  if (t) {
+    aiQuestion.textContent = t;
+    aiQuestionWrap.classList.remove('hidden');
+  } else {
+    aiQuestion.textContent = '';
+    aiQuestionWrap.classList.add('hidden');
+  }
 }
 
 function updateAnswerNav() {
@@ -115,15 +109,17 @@ function updateAnswerNav() {
 }
 
 async function showAnswerAtIndex(index) {
-  const answers = await getAnswersFromHistory();
-  const total = Math.max(answers.length, liveAnswerContent ? 1 : 0);
+  const pairs = await getAnswerPairsFromHistory();
+  const total = Math.max(pairs.length, liveAnswerContent ? 1 : 0);
   if (total === 0) return;
   currentAnswerIndex = Math.max(0, Math.min(index, total - 1));
   if (currentAnswerIndex === 0 && aiBusy) return;
   if (currentAnswerIndex === 0 && liveAnswerContent) {
+    setQuestionBlock(liveQuestionContent);
     aiText.innerHTML = liveAnswerContent;
-  } else if (answers[currentAnswerIndex]) {
-    aiText.innerHTML = formatAnswer(answers[currentAnswerIndex]);
+  } else if (pairs[currentAnswerIndex]) {
+    setQuestionBlock(pairs[currentAnswerIndex].question);
+    aiText.innerHTML = formatAnswer(pairs[currentAnswerIndex].answer);
   }
   applyHighlighting(aiText);
   showAiState('text');
@@ -138,7 +134,10 @@ function showAiState(which) {
   aiError.classList.add('hidden');
   if (which === 'placeholder') {
     if ((aiText.textContent || '').trim() || (aiText.dataset.rawBuffer || '').trim()) which = 'text';
-    else aiPlaceholder.classList.remove('hidden');
+    else {
+      aiPlaceholder.classList.remove('hidden');
+      setQuestionBlock('');
+    }
   }
   if (which === 'loading') aiLoading.classList.remove('hidden');
   else if (which === 'text') aiText.classList.remove('hidden');
@@ -159,8 +158,10 @@ function onStreamDone(currentQuestion) {
   if (!aiText) return;
   const fullResponse = (aiText.dataset.rawBuffer || aiText.textContent || '').trim() || '(No response)';
   delete aiText.dataset.rawBuffer;
+  liveQuestionContent = typeof currentQuestion === 'string' ? currentQuestion.trim() : '';
   liveAnswerContent = fullResponse ? formatAnswer(fullResponse) : '(No response)';
   currentAnswerIndex = 0;
+  setQuestionBlock(liveQuestionContent);
   aiText.innerHTML = liveAnswerContent;
   applyHighlighting(aiText);
   showAiState('text');
@@ -183,6 +184,7 @@ async function askAiWithQuestion(q) {
   if (!q || aiBusy || !window.floatingAPI?.callAIStream) return;
   aiBusy = true;
   if (aiText) { aiText.textContent = ''; aiText.innerHTML = ''; delete aiText.dataset.rawBuffer; }
+  setQuestionBlock(typeof q === 'string' ? q : '');
   showAiState('loading');
 
   const handleChunk = (e) => onStreamChunk(e.detail);
@@ -203,12 +205,16 @@ async function askAiWithQuestion(q) {
   window.addEventListener('ai-stream-done', handleDone);
   window.addEventListener('ai-stream-error', handleError);
 
-  const config = await (window.floatingAPI?.getSessionConfig?.() || Promise.resolve(null));
-  const systemPrompt = buildSystemPrompt(config);
-  const conversation = await (window.floatingAPI?.getConversationHistory?.() || Promise.resolve([]));
+  const [config, conversation, interviewSummary] = await Promise.all([
+    window.floatingAPI?.getSessionConfig?.() || Promise.resolve(null),
+    window.floatingAPI?.getConversationHistory?.() || Promise.resolve([]),
+    window.floatingAPI?.getInterviewSummary?.() || Promise.resolve(''),
+  ]);
+  const systemPrompt = buildSystemPrompt(config, interviewSummary);
+  const recent = Array.isArray(conversation) ? conversation.slice(-LAST_PAIRS_FOR_REQUEST * 2) : [];
   const messages = [
     { role: 'system', content: systemPrompt },
-    ...conversation.map((m) => ({ role: m.role, content: m.content })),
+    ...recent.map((m) => ({ role: m.role, content: m.content })),
     { role: 'user', content: q },
   ];
 
@@ -220,9 +226,19 @@ async function askAiWithQuestion(q) {
 }
 
 if (window.floatingAPI?.onAskQuestion) {
+  // Legacy event-based path (main no longer pushes ask-question, kept for compatibility)
   window.floatingAPI.onAskQuestion((q) => {
     if (q) askAiWithQuestion(q);
   });
+}
+
+// Poll for pending questions so right panel pulls instead of main pushing events
+if (window.floatingAPI?.getPendingAskQuestion) {
+  setInterval(() => {
+    window.floatingAPI.getPendingAskQuestion().then((q) => {
+      if (q) askAiWithQuestion(q);
+    });
+  }, 200);
 }
 
 let layoutInverted = false;

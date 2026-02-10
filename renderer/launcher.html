@@ -127,10 +127,11 @@
       <h2>Session type</h2>
       <p class="launcher-session-type-subtitle">Choose how you want to use AlphaViewAI</p>
       <div class="launcher-session-type-options">
-        <label class="launcher-session-type-option">
+        <label class="launcher-session-type-option" id="free-session-option">
           <input type="radio" name="session-type" value="free" checked />
           <span class="launcher-session-type-label">Free session (10 min)</span>
           <span class="launcher-session-type-desc">Try AlphaViewAI with a 10-minute trial</span>
+          <span id="free-session-cooldown" class="launcher-free-cooldown hidden" aria-live="polite"></span>
         </label>
         <label class="launcher-session-type-option">
           <input type="radio" name="session-type" value="full" />
@@ -145,6 +146,12 @@
           </span>
         </label>
       </div>
+      <h3 class="launcher-speech-provider-heading">Speech / transcription</h3>
+      <label for="select-speech-provider">Select speech provider</label>
+      <select id="select-speech-provider">
+        <option value="azure" selected>Alpha-Z (Suggested)</option>
+        <option value="deepgram">Alpha-D (Fast)</option>
+      </select>
       </div>
       <div class="launcher-footer launcher-footer-row">
         <button type="button" class="launcher-btn launcher-btn-secondary" id="btn-back-3">Back</button>

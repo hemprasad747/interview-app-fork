@@ -29,8 +29,9 @@ let seconds = 0;
 let aiBusy = false;
 let sessionActive = false;
 let suppressIconClick = false;
-// Full conversation for follow-up context (user + assistant messages only; system added when sending)
-const MAX_HISTORY_MESSAGES = 10;
+// Full conversation for follow-up context (user + assistant messages only; system added when sending). Keep 6 pairs (12 messages); send last 4 pairs per request for speed.
+const MAX_HISTORY_MESSAGES = 12;
+const LAST_PAIRS_FOR_REQUEST = 4;
 const MAX_HISTORY_DISPLAY = 6;
 let conversationHistory = [];
 // Live transcriptions from mic (shown in history)
@@ -51,8 +52,19 @@ let systemAudioAzureRecognizer = null;
 let systemAudioQuestionBuffer = '';
 let systemAudioLiveBuffer = '';
 let systemAudioPauseTimer = null;
-// Smaller = faster auto-answer after silence
-const SYSTEM_AUDIO_PAUSE_MS = 450;
+let micQuestionBuffer = '';
+let micLiveBuffer = '';
+let micPauseTimer = null;
+let deepgramSocket = null;
+let deepgramAudioContext = null;
+let deepgramProcessor = null;
+let deepgramSystemSocket = null;
+let deepgramSystemAudioContext = null;
+let deepgramSystemProcessor = null;
+/** Only generate answer after this much silence. No answer until this pause (e.g. 1 min question). Use 5s so engine segment gaps don't flush mid-speech. */
+const SYSTEM_AUDIO_PAUSE_MS = 5000;
+const SYSTEM_AUDIO_FLUSH_COOLDOWN_MS = 2500;
+let systemAudioLastFlushTime = 0;
 let historyAutoScroll = true;
 
 function setHistoryAutoScroll(enabled) {
@@ -257,6 +269,18 @@ function stopMic() {
     try { speechRecognition.stop(); } catch (_) {}
     speechRecognition = null;
   }
+  if (deepgramSocket) {
+    try { deepgramSocket.close(); } catch (_) {}
+    deepgramSocket = null;
+  }
+  if (deepgramProcessor && deepgramAudioContext) {
+    try { deepgramProcessor.disconnect(); } catch (_) {}
+    deepgramProcessor = null;
+  }
+  if (deepgramAudioContext && deepgramAudioContext.state !== 'closed') {
+    deepgramAudioContext.close().catch(() => {});
+    deepgramAudioContext = null;
+  }
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     try { mediaRecorder.stop(); } catch (_) {}
   }
@@ -266,6 +290,15 @@ function stopMic() {
   }
   mediaRecorder = null;
   recordingChunks = [];
+  if (micPauseTimer) {
+    clearTimeout(micPauseTimer);
+    micPauseTimer = null;
+  }
+  if ((micQuestionBuffer || '').trim()) {
+    addTranscriptionToHistory(micQuestionBuffer.trim(), new Date(), 'mic');
+    micQuestionBuffer = '';
+  }
+  micLiveBuffer = '';
   liveTranscriptBuffer = '';
   if (btnMic) btnMic.classList.remove('mic-active');
   renderHistory();
@@ -279,14 +312,49 @@ function addTranscriptionToHistory(text, time, source = 'mic') {
   renderHistory();
 }
 
+/** Append to mic buffer; show combined phrase (buffer + live) before pause. Flush one entry after pause. */
+function appendMicTranscriptToHistory(transcript) {
+  const t = (transcript || '').trim();
+  if (!t) return;
+  micQuestionBuffer = (micQuestionBuffer ? micQuestionBuffer + ' ' : '') + t;
+  if (micPauseTimer) clearTimeout(micPauseTimer);
+  micPauseTimer = setTimeout(flushMicQuestion, SYSTEM_AUDIO_PAUSE_MS);
+}
+
+function flushMicQuestion() {
+  if (micPauseTimer) {
+    clearTimeout(micPauseTimer);
+    micPauseTimer = null;
+  }
+  const q = (micQuestionBuffer || '').trim();
+  micQuestionBuffer = '';
+  micLiveBuffer = '';
+  liveTranscriptBuffer = '';
+  if (q) addTranscriptionToHistory(q, new Date(), 'mic');
+}
+
+function getMicLiveCombined() {
+  const buf = (micQuestionBuffer || '').trim();
+  const live = (micLiveBuffer || '').trim();
+  return buf ? (live ? buf + ' ' + live : buf) : live;
+}
+
+function getSystemLiveCombined() {
+  const buf = (systemAudioQuestionBuffer || '').trim();
+  const live = (systemAudioLiveBuffer || '').trim();
+  return buf ? (live ? buf + ' ' + live : buf) : live;
+}
+
 function showSpeechErrorOnce(msg) {
   if (lastSpeechError === msg) return;
   lastSpeechError = msg;
   addTranscriptionToHistory('[Speech: ' + msg + '] Using streaming Whisper (~1.5s chunks).', new Date());
 }
 
+const FALLBACK_TRANSCRIBE_MIN_BYTES = 4000;
+let fallbackTranscribeErrorCount = 0;
 async function transcribeChunk(blob, mimeType) {
-  if (!window.floatingAPI?.transcribeAudio || blob.size < 500) return null;
+  if (!window.floatingAPI?.transcribeAudio || blob.size < FALLBACK_TRANSCRIBE_MIN_BYTES) return null;
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onloadend = async () => {
@@ -294,6 +362,7 @@ async function transcribeChunk(blob, mimeType) {
       if (!base64) { resolve(null); return; }
       try {
         const result = await window.floatingAPI.transcribeAudio(base64, mimeType);
+        if (result?.text) fallbackTranscribeErrorCount = 0;
         resolve(result);
       } catch (e) {
         resolve({ error: e.message });
@@ -313,14 +382,17 @@ async function startWhisperFallback() {
   const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm' : 'audio/webm';
   mediaRecorder = new MediaRecorder(audioStream);
   mediaRecorder.ondataavailable = async (e) => {
-    if (!isMicRecording || !sessionActive || e.data.size < 500) return;
+    if (!isMicRecording || !sessionActive || !e.data?.size) return;
     const blob = e.data;
     const result = await transcribeChunk(blob, mimeType);
-    if (result?.text) addTranscriptionToHistory(result.text, new Date());
-    else if (result?.error && !result.error.includes('Empty')) addTranscriptionToHistory('[Whisper: ' + result.error + ']', new Date());
+    if (result?.text) appendMicTranscriptToHistory(result.text);
+    else if (result?.error && !result.error.includes('Empty')) {
+      fallbackTranscribeErrorCount++;
+      if (fallbackTranscribeErrorCount <= 2) addTranscriptionToHistory('[Transcribe: ' + result.error + ']', new Date());
+    }
   };
   mediaRecorder.onstop = () => {};
-  mediaRecorder.start(1500);
+  mediaRecorder.start(4000);
   isMicRecording = true;
   if (btnMic) btnMic.classList.add('mic-active');
 }
@@ -349,7 +421,8 @@ async function startAzureSpeech(keyOrToken, region, language, useToken = false) 
     azureRecognizer.recognizing = (s, e) => {
       if (!sessionActive || !isMicRecording) return;
       if (e.result.reason === sdk.ResultReason.RecognizingSpeech && e.result.text) {
-        liveTranscriptBuffer = e.result.text;
+        micLiveBuffer = (e.result.text || '').trim();
+        liveTranscriptBuffer = getMicLiveCombined();
         setHistoryAutoScroll(true);
         renderHistory();
       }
@@ -357,8 +430,9 @@ async function startAzureSpeech(keyOrToken, region, language, useToken = false) 
     azureRecognizer.recognized = (s, e) => {
       if (!sessionActive || !isMicRecording) return;
       if (e.result.reason === sdk.ResultReason.RecognizedSpeech && e.result.text) {
-        addTranscriptionToHistory(e.result.text, new Date());
-        liveTranscriptBuffer = '';
+        appendMicTranscriptToHistory(e.result.text);
+        micLiveBuffer = '';
+        liveTranscriptBuffer = getMicLiveCombined();
         renderHistory();
       }
     };
@@ -380,12 +454,170 @@ async function startAzureSpeech(keyOrToken, region, language, useToken = false) 
   }
 }
 
+function buildDeepgramStreamingUrl(language) {
+  const lang = (language || 'en').trim().split('-')[0] || 'en';
+  const params = new URLSearchParams({
+    encoding: 'linear16',
+    sample_rate: '16000',
+    language: lang,
+    model: 'nova-2',
+    interim_results: 'true',
+    punctuate: 'true',
+    smart_format: 'true',
+  });
+  return `wss://api.deepgram.com/v1/listen?${params.toString()}`;
+}
+
+function createDeepgramPcmSender(socket, contextSampleRate) {
+  const targetRate = 16000;
+  const ratio = contextSampleRate / targetRate;
+  return function (float32) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const len = Math.floor(float32.length / ratio);
+    const int16 = new Int16Array(len);
+    for (let i = 0; i < len; i++) {
+      const v = float32[Math.floor(i * ratio)];
+      int16[i] = v < -1 ? -32768 : v > 1 ? 32767 : Math.round(v * 32767);
+    }
+    socket.send(int16.buffer);
+  };
+}
+
+const DEEPGRAM_WORKLET_CODE = `
+class DeepgramPCMProcessor extends AudioWorkletProcessor {
+  process(inputs, outputs, parameters) {
+    const input = inputs[0];
+    if (!input || !input.length) return true;
+    const channel = input[0];
+    if (!channel || !channel.length) return true;
+    this.port.postMessage(new Float32Array(channel));
+    return true;
+  }
+}
+registerProcessor('deepgram-pcm', DeepgramPCMProcessor);
+`;
+
+async function connectDeepgramWithWorklet(ctx, stream, sendPcm, isMic) {
+  const blob = new Blob([DEEPGRAM_WORKLET_CODE], { type: 'application/javascript' });
+  const url = URL.createObjectURL(blob);
+  try {
+    await ctx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+    const src = ctx.createMediaStreamSource(stream);
+    const node = new AudioWorkletNode(ctx, 'deepgram-pcm');
+    node.port.onmessage = (e) => {
+      if (isMic && (!isMicRecording || !deepgramSocket || deepgramSocket.readyState !== WebSocket.OPEN)) return;
+      if (!isMic && (!isSystemAudioCapturing || !deepgramSystemSocket || deepgramSystemSocket.readyState !== WebSocket.OPEN)) return;
+      sendPcm(e.data);
+    };
+    src.connect(node);
+    node.connect(ctx.destination);
+    return node;
+  } catch (_) {
+    URL.revokeObjectURL(url);
+    throw new Error('AudioWorklet not available');
+  }
+}
+
+function connectDeepgramWithScriptProcessor(ctx, stream, sendPcm, isMic) {
+  const src = ctx.createMediaStreamSource(stream);
+  const processor = ctx.createScriptProcessor(4096, 1, 1);
+  processor.onaudioprocess = (e) => {
+    if (isMic && (!isMicRecording || !deepgramSocket || deepgramSocket.readyState !== WebSocket.OPEN)) return;
+    if (!isMic && (!isSystemAudioCapturing || !deepgramSystemSocket || deepgramSystemSocket.readyState !== WebSocket.OPEN)) return;
+    sendPcm(e.inputBuffer.getChannelData(0));
+  };
+  src.connect(processor);
+  processor.connect(ctx.destination);
+  return processor;
+}
+
+async function startDeepgramMic(apiKey, language) {
+  const url = buildDeepgramStreamingUrl(language);
+  try {
+    deepgramSocket = new WebSocket(url, ['token', apiKey]);
+  } catch (e) {
+    addTranscriptionToHistory('[Deepgram: ' + (e.message || 'WebSocket failed') + ']', new Date());
+    useWhisperFallback = true;
+    startWhisperFallback();
+    return;
+  }
+  deepgramSocket.onopen = () => {
+    (async () => {
+      try {
+        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        deepgramAudioContext = ctx;
+        const sendPcm = createDeepgramPcmSender(deepgramSocket, ctx.sampleRate);
+        try {
+          deepgramProcessor = await connectDeepgramWithWorklet(ctx, audioStream, sendPcm, true);
+        } catch (_) {
+          deepgramProcessor = connectDeepgramWithScriptProcessor(ctx, audioStream, sendPcm, true);
+        }
+        isMicRecording = true;
+        if (btnMic) btnMic.classList.add('mic-active');
+      } catch (e) {
+        addTranscriptionToHistory('[Deepgram mic: ' + (e && e.message ? e.message : 'Failed') + '] Using fallback.', new Date());
+        useWhisperFallback = true;
+        stopMic();
+        startWhisperFallback();
+      }
+    })().catch(() => {
+      addTranscriptionToHistory('[Deepgram mic: error] Using fallback.', new Date());
+      useWhisperFallback = true;
+      stopMic();
+      startWhisperFallback();
+    });
+  };
+  deepgramSocket.onmessage = (event) => {
+    if (!sessionActive || !isMicRecording) return;
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type !== 'Results') return;
+      const transcript = msg.channel?.alternatives?.[0]?.transcript?.trim();
+      if (!transcript) return;
+      if (msg.speech_final || msg.is_final) {
+        appendMicTranscriptToHistory(transcript);
+        micLiveBuffer = '';
+      } else {
+        micLiveBuffer = transcript;
+      }
+      liveTranscriptBuffer = getMicLiveCombined();
+      setHistoryAutoScroll(true);
+      renderHistory();
+    } catch (_) {}
+  };
+  deepgramSocket.onerror = () => {
+    addTranscriptionToHistory('[Deepgram: connection error] Using fallback.', new Date());
+    useWhisperFallback = true;
+    stopMic();
+    startWhisperFallback();
+  };
+  deepgramSocket.onclose = () => {
+    if (!isMicRecording) return;
+    flushMicQuestion();
+  };
+}
+
 async function startMic() {
   if (isMicRecording) return;
   lastSpeechError = null;
   if (useWhisperFallback) {
     startWhisperFallback();
     return;
+  }
+  const provider = await (window.floatingAPI?.getSpeechProvider?.() || Promise.resolve('azure'));
+  if (provider === 'deepgram') {
+    const dgConfig = await (window.floatingAPI?.getDeepgramStreamingConfig?.() || Promise.resolve(null));
+    if (dgConfig?.code === 'FREE_SESSION_COOLDOWN') {
+      if (window.floatingAPI?.endSession) window.floatingAPI.endSession();
+      return;
+    }
+    if (dgConfig?.apiKey) {
+      await startDeepgramMic(dgConfig.apiKey, dgConfig.language);
+      return;
+    }
+    addTranscriptionToHistory('[Deepgram: no config] Using Azure.', new Date());
   }
   const azureConfig = await (window.floatingAPI?.getAzureSpeechConfig?.() || Promise.resolve(null));
   if (azureConfig?.code === 'FREE_SESSION_COOLDOWN') {
@@ -432,11 +664,10 @@ async function startMic() {
       else interim += t;
     }
     if (final) {
-      addTranscriptionToHistory(final, new Date());
-      liveTranscriptBuffer = interim;
-    } else {
-      liveTranscriptBuffer = interim;
+      appendMicTranscriptToHistory(final);
     }
+    micLiveBuffer = interim;
+    liveTranscriptBuffer = getMicLiveCombined();
     setHistoryAutoScroll(true);
     renderHistory();
   };
@@ -490,6 +721,18 @@ function stopSystemAudio() {
     try { systemAudioAzureRecognizer.close(); } catch (_) {}
     systemAudioAzureRecognizer = null;
   }
+  if (deepgramSystemSocket) {
+    try { deepgramSystemSocket.close(); } catch (_) {}
+    deepgramSystemSocket = null;
+  }
+  if (deepgramSystemProcessor && deepgramSystemAudioContext) {
+    try { deepgramSystemProcessor.disconnect(); } catch (_) {}
+    deepgramSystemProcessor = null;
+  }
+  if (deepgramSystemAudioContext && deepgramSystemAudioContext.state !== 'closed') {
+    deepgramSystemAudioContext.close().catch(() => {});
+    deepgramSystemAudioContext = null;
+  }
   if (systemAudioRecorder && systemAudioRecorder.state !== 'inactive') {
     try { systemAudioRecorder.stop(); } catch (_) {}
   }
@@ -509,13 +752,96 @@ function flushSystemAudioQuestion() {
   }
   const q = (systemAudioQuestionBuffer || '').trim();
   systemAudioQuestionBuffer = '';
+  systemAudioLiveBuffer = '';
+  systemAudioLastFlushTime = Date.now();
+  if (q) addTranscriptionToHistory(q, new Date(), 'system');
   renderHistory();
   if (q && !aiBusy && window.floatingAPI?.callAIStream) askAiWithQuestion(q);
+}
+
+async function startDeepgramSystemAudio(apiKey, language) {
+  const url = buildDeepgramStreamingUrl(language);
+  try {
+    systemAudioStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    const audioTracks = systemAudioStream.getAudioTracks();
+    if (audioTracks.length === 0) {
+      const msg = /win/i.test(navigator.platform) ? '[System audio: No audio. Share a screen and ensure "Share audio" is checked.]' : '[System audio: System audio capture is only supported on Windows.]';
+      addTranscriptionToHistory(msg, new Date(), 'system');
+      systemAudioStream.getTracks().forEach((t) => t.stop());
+      systemAudioStream = null;
+      return;
+    }
+    deepgramSystemSocket = new WebSocket(url, ['token', apiKey]);
+  } catch (e) {
+    const msg = e.message || e.name || 'Permission denied or cancelled';
+    addTranscriptionToHistory('[System audio: ' + msg + ']', new Date(), 'system');
+    if (systemAudioStream) {
+      systemAudioStream.getTracks().forEach((t) => t.stop());
+      systemAudioStream = null;
+    }
+    return;
+  }
+  systemAudioStream.getTracks().forEach((t) => { t.onended = () => { stopSystemAudio(); }; });
+  deepgramSystemSocket.onopen = async () => {
+    try {
+      const audioOnly = new MediaStream(systemAudioStream.getAudioTracks());
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      deepgramSystemAudioContext = ctx;
+      const sendPcm = createDeepgramPcmSender(deepgramSystemSocket, ctx.sampleRate);
+      try {
+        deepgramSystemProcessor = await connectDeepgramWithWorklet(ctx, audioOnly, sendPcm, false);
+      } catch (_) {
+        deepgramSystemProcessor = connectDeepgramWithScriptProcessor(ctx, audioOnly, sendPcm, false);
+      }
+      isSystemAudioCapturing = true;
+      if (btnSystemAudio) btnSystemAudio.classList.add('system-audio-active');
+    } catch (e) {
+      addTranscriptionToHistory('[System audio: Deepgram ' + (e && e.message ? e.message : 'failed') + ']', new Date(), 'system');
+      stopSystemAudio();
+    }
+  };
+  deepgramSystemSocket.onmessage = (event) => {
+    if (!isSystemAudioCapturing || !sessionActive) return;
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type !== 'Results') return;
+      const transcript = msg.channel?.alternatives?.[0]?.transcript?.trim();
+      if (!transcript) return;
+      if (msg.speech_final || msg.is_final) {
+        if (Date.now() - systemAudioLastFlushTime < SYSTEM_AUDIO_FLUSH_COOLDOWN_MS) return;
+        systemAudioQuestionBuffer = (systemAudioQuestionBuffer ? systemAudioQuestionBuffer + ' ' : '') + transcript;
+        systemAudioLiveBuffer = '';
+        if (systemAudioPauseTimer) clearTimeout(systemAudioPauseTimer);
+        systemAudioPauseTimer = setTimeout(flushSystemAudioQuestion, SYSTEM_AUDIO_PAUSE_MS);
+      } else {
+        systemAudioLiveBuffer = transcript;
+      }
+      setHistoryAutoScroll(true);
+      renderHistory();
+    } catch (_) {}
+  };
+  deepgramSystemSocket.onerror = () => {
+    addTranscriptionToHistory('[System audio: Deepgram error]', new Date(), 'system');
+  };
+  deepgramSystemSocket.onclose = () => {};
 }
 
 async function startSystemAudio() {
   if (isSystemAudioCapturing) return;
   if (!sessionActive) return;
+  const provider = await (window.floatingAPI?.getSpeechProvider?.() || Promise.resolve('azure'));
+  if (provider === 'deepgram') {
+    const dgConfig = await (window.floatingAPI?.getDeepgramStreamingConfig?.() || Promise.resolve(null));
+    if (dgConfig?.code === 'FREE_SESSION_COOLDOWN') {
+      if (window.floatingAPI?.endSession) window.floatingAPI.endSession();
+      return;
+    }
+    if (dgConfig?.apiKey) {
+      await startDeepgramSystemAudio(dgConfig.apiKey, dgConfig.language);
+      return;
+    }
+    addTranscriptionToHistory('[System audio: Deepgram no config] Using Azure.', new Date(), 'system');
+  }
   const azureConfig = await (window.floatingAPI?.getAzureSpeechConfig?.() || Promise.resolve(null));
   if (azureConfig?.code === 'FREE_SESSION_COOLDOWN') {
     if (window.floatingAPI?.endSession) window.floatingAPI.endSession();
@@ -568,14 +894,14 @@ async function startSystemAudio() {
       if (!isSystemAudioCapturing || !sessionActive) return;
       if (e.result.reason === sdk.ResultReason.RecognizedSpeech && e.result.text) {
         const text = e.result.text.trim();
-        if (text) {
+        if (text && Date.now() - systemAudioLastFlushTime >= SYSTEM_AUDIO_FLUSH_COOLDOWN_MS) {
           systemAudioQuestionBuffer = (systemAudioQuestionBuffer ? systemAudioQuestionBuffer + ' ' : '') + text;
           systemAudioLiveBuffer = '';
           if (systemAudioPauseTimer) clearTimeout(systemAudioPauseTimer);
           systemAudioPauseTimer = setTimeout(flushSystemAudioQuestion, SYSTEM_AUDIO_PAUSE_MS);
-          setHistoryAutoScroll(true);
-          renderHistory();
         }
+        setHistoryAutoScroll(true);
+        renderHistory();
       }
     };
     systemAudioAzureRecognizer.canceled = (s, e) => {
@@ -663,7 +989,7 @@ function showAiState(which) {
   else if (which === 'error') aiError.classList.remove('hidden');
 }
 
-const SYSTEM_PROMPT = 'You are a helpful assistant. Answer in 1–3 short sentences. Use the conversation history to answer follow-up questions.';
+const SYSTEM_PROMPT = 'You are the interviewee in a job interview. Always answer in first person (I, my, me). Never act as an AI assistant: do not greet or offer to help; only answer the question asked. Give complete, structured answers: use 1. 2. 3. for types or steps, bullet points (- or *) for lists, **bold** for key terms. Never say you are an AI or assistant. Use the conversation history for follow-ups.';
 
 function onStreamChunk(chunk) {
   if (!aiText) return;
@@ -812,9 +1138,10 @@ async function askAiWithQuestion(q) {
   window.addEventListener('ai-stream-done', handleDone);
   window.addEventListener('ai-stream-error', handleError);
 
+  const recent = conversationHistory.slice(-LAST_PAIRS_FOR_REQUEST * 2);
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
-    ...conversationHistory,
+    ...recent.map((m) => ({ role: m.role, content: m.content })),
     { role: 'user', content: q },
   ];
 

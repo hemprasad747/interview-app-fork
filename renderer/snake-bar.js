@@ -53,3 +53,7 @@ if (window.floatingAPI?.onLiveTranscriptUpdated) {
 if (window.floatingAPI?.onHistoryUpdated) {
   window.floatingAPI.onHistoryUpdated(refreshSnakeText);
 }
+// Poll for live transcript so main never pushes (avoids disposed-frame errors)
+if (window.floatingAPI?.getLiveTranscript) {
+  setInterval(() => refreshSnakeText(), 300);
+}

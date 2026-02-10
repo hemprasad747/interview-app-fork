@@ -5,3 +5,6 @@ pmodule-app/
 pmodule-extract/
 pmodule-extracted/
 sources/
+
+# Nested repo (separate git); keep untracked in this repo
+alphaviewai website/
