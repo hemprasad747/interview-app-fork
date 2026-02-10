@@ -1054,6 +1054,36 @@ ipcMain.handle('set-right-panel-bounds', (_event, { x, y, width, height }) => {
   rightWindow.setBounds({ x: newX, y: newY, width: w, height: h });
 });
 
+ipcMain.handle('take-screenshot', async () => {
+  try {
+    const primary = screen.getPrimaryDisplay();
+    const { width, height } = primary.size;
+    const scale = Math.min(1, 1280 / width, 720 / height);
+    const thumbWidth = Math.round(width * scale);
+    const thumbHeight = Math.round(height * scale);
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: thumbWidth, height: thumbHeight },
+    });
+    const source = sources[0];
+    if (!source?.thumbnail) return { error: 'No screen capture' };
+    const png = source.thumbnail.toPNG();
+    const imageBase64 = png.toString('base64');
+    return { imageBase64 };
+  } catch (e) {
+    return { error: e?.message || 'Screenshot failed' };
+  }
+});
+
+ipcMain.handle('show-analysis-in-right', (_event, { question, answer }) => {
+  if (rightWindow && !rightWindow.isDestroyed() && question != null && answer != null) {
+    rightWindow.webContents.send('show-analysis-result', {
+      question: typeof question === 'string' ? question : 'Screen analysis',
+      answer: typeof answer === 'string' ? answer : '',
+    });
+  }
+});
+
 ipcMain.handle('request-ai-question', (_event, q) => {
   if (!q || typeof q !== 'string') return;
   pendingAskQuestion = q;
@@ -1118,9 +1148,10 @@ ipcMain.handle('get-screen-bounds', () => {
 
 ipcMain.handle('get-azure-speech-config', async () => {
   const language = (sessionConfig.language || 'en-US').trim() || 'en-US';
-  const isFull = (sessionConfig.sessionType || '').toString().toLowerCase() === 'full';
+  const sessionType = (sessionConfig.sessionType || '').toString().toLowerCase();
+  const isPaidSession = sessionType === 'full' || sessionType === 'exam';
   let url = `${API_BASE}/speechToken?language=${encodeURIComponent(language)}`;
-  if (isFull) url += '&mode=full';
+  if (isPaidSession) url += '&mode=full';
   const auth = getAuthData();
   const headers = auth?.token ? { Authorization: `Bearer ${auth.token}` } : {};
   // Try backend proxy first (returns { token, region, language }) - no keys in app
@@ -1161,9 +1192,10 @@ ipcMain.handle('get-speech-provider', () => getSpeechProvider());
 
 ipcMain.handle('get-deepgram-streaming-config', async () => {
   const language = (sessionConfig.language || 'en-US').trim() || 'en-US';
-  const isFull = (sessionConfig.sessionType || '').toString().toLowerCase() === 'full';
+  const sessionType = (sessionConfig.sessionType || '').toString().toLowerCase();
+  const isPaidSession = sessionType === 'full' || sessionType === 'exam';
   let url = `${API_BASE}/deepgramStreamingConfig?language=${encodeURIComponent(language)}`;
-  if (isFull) url += '&mode=full';
+  if (isPaidSession) url += '&mode=full';
   const auth = getAuthData();
   const headers = auth?.token ? { Authorization: `Bearer ${auth.token}` } : {};
   try {

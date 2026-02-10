@@ -129,13 +129,13 @@
       <div class="launcher-session-type-options">
         <label class="launcher-session-type-option" id="free-session-option">
           <input type="radio" name="session-type" value="free" checked />
-          <span class="launcher-session-type-label">Free session (10 min)</span>
+          <span class="launcher-session-type-label">Interview – Free (10 min)</span>
           <span class="launcher-session-type-desc">Try AlphaViewAI with a 10-minute trial</span>
           <span id="free-session-cooldown" class="launcher-free-cooldown hidden" aria-live="polite"></span>
         </label>
         <label class="launcher-session-type-option">
           <input type="radio" name="session-type" value="full" />
-          <span class="launcher-session-type-label">Full interview</span>
+          <span class="launcher-session-type-label">Interview – Full</span>
           <span class="launcher-session-type-desc">
             Use your credits
             <span class="launcher-credits-badge" id="credits-badge" title="Your interview credits">
@@ -145,6 +145,16 @@
             <button type="button" class="launcher-btn-link launcher-buy-credits" id="btn-buy-credits">Buy credits</button>
           </span>
         </label>
+        <label class="launcher-session-type-option" id="exam-session-option">
+          <input type="radio" name="session-type" value="exam" />
+          <span class="launcher-session-type-label">Exam</span>
+          <span class="launcher-session-type-desc">Auto capture screen. AI gives only the correct answer option (focus on Q&amp;A). Uses your credits.</span>
+        </label>
+      </div>
+      <div id="exam-interval-wrap" class="launcher-exam-interval-wrap hidden">
+        <label for="input-exam-interval">Capture screen every (15–30 sec)</label>
+        <input type="number" id="input-exam-interval" class="launcher-exam-interval-input" min="15" max="30" value="30" step="1" />
+        <span class="launcher-exam-interval-suffix">sec</span>
       </div>
       <h3 class="launcher-speech-provider-heading">Speech / transcription</h3>
       <label for="select-speech-provider">Select speech provider</label>

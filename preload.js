@@ -12,6 +12,9 @@ ipcRenderer.on('ai-stream-error', (_e, err) => {
 ipcRenderer.on('free-session-cooldown', (_e, data) => {
   window.dispatchEvent(new CustomEvent('free-session-cooldown', { detail: data }));
 });
+ipcRenderer.on('show-analysis-result', (_e, data) => {
+  window.dispatchEvent(new CustomEvent('show-analysis-result', { detail: data }));
+});
 
 contextBridge.exposeInMainWorld('floatingAPI', {
   getAzureSpeechConfig: () => ipcRenderer.invoke('get-azure-speech-config'),
@@ -66,6 +69,8 @@ contextBridge.exposeInMainWorld('floatingAPI', {
   callAI: (payload) => ipcRenderer.invoke('call-ai', payload),
   callAIStream: (payload) => ipcRenderer.invoke('call-ai-stream', payload),
   analyzeImage: (payload) => ipcRenderer.invoke('analyze-image', payload),
+  takeScreenshot: () => ipcRenderer.invoke('take-screenshot'),
+  showAnalysisInRight: (payload) => ipcRenderer.invoke('show-analysis-in-right', payload),
   transcribeAudio: (base64Audio, mimeType) => ipcRenderer.invoke('transcribe-audio', base64Audio, mimeType),
   windowMinimize: () => ipcRenderer.send('window-minimize'),
   windowMaximize: () => ipcRenderer.send('window-maximize'),

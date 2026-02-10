@@ -357,6 +357,8 @@ html, body {
   background: rgba(0, 0, 0, 0.7);
   box-shadow: var(--actionable-shadow);
 }
+.header-btn.photo-analysis-busy { opacity: 0.7; cursor: wait; pointer-events: none; }
+
 .header-btn.system-audio-active:hover {
   background: #000;
   color: #f87171;
@@ -1371,6 +1373,20 @@ html.launcher-doc.launcher-window-minimized,
 .launcher-buy-credits { margin-left: 6px; font-size: 11px; }
 .launcher-credits-badge svg { flex-shrink: 0; }
 .launcher-session-type-subtitle { color: var(--text-muted); font-size: 12px; margin-bottom: 12px; }
+.launcher-exam-interval-wrap {
+  display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 10px 12px;
+  background: rgba(255,255,255,0.04); border-radius: var(--launcher-radius); border: 1px solid var(--launcher-border);
+}
+.launcher-exam-interval-wrap.hidden { display: none !important; }
+.launcher-exam-interval-wrap label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.launcher-exam-interval-input {
+  width: 56px; padding: 6px 8px; font-size: 13px; border-radius: 6px;
+  border: 1px solid var(--launcher-border); background: var(--launcher-bg); color: var(--launcher-fg);
+  -moz-appearance: textfield;
+}
+.launcher-exam-interval-input::-webkit-outer-spin-button,
+.launcher-exam-interval-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.launcher-exam-interval-suffix { font-size: 12px; color: var(--text-muted); }
 .launcher-speech-provider-heading { font-size: 14px; font-weight: 600; margin-top: 20px; margin-bottom: 4px; }
 .launcher-free-cooldown { display: block; font-size: 12px; color: var(--launcher-accent); margin-top: 6px; font-weight: 500; }
 .launcher-free-cooldown.hidden { display: none !important; }

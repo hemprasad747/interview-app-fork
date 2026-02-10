@@ -241,6 +241,23 @@ if (window.floatingAPI?.getPendingAskQuestion) {
   }, 200);
 }
 
+window.addEventListener('show-analysis-result', (e) => {
+  const { question, answer } = e.detail || {};
+  if (question == null && answer == null) return;
+  const q = typeof question === 'string' ? question : 'Screen analysis';
+  const a = typeof answer === 'string' ? answer : '';
+  liveQuestionContent = q;
+  liveAnswerContent = a ? formatAnswer(a) : '';
+  currentAnswerIndex = 0;
+  setQuestionBlock(q);
+  if (aiText) {
+    aiText.innerHTML = liveAnswerContent;
+    applyHighlighting(aiText);
+  }
+  showAiState('text');
+  updateAnswerNav();
+});
+
 let layoutInverted = false;
 function setLayoutInverted(inverted) {
   layoutInverted = !!inverted;

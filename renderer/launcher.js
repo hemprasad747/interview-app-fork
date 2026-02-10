@@ -287,35 +287,70 @@ async function refreshCredits() {
 function updateStartSessionButton() {
   if (!btnStartSession) return;
   const sessionTypeRadio = document.querySelector('input[name="session-type"]:checked');
-  const isFull = sessionTypeRadio?.value === 'full';
-  const freeOnCooldown = sessionTypeRadio?.value === 'free' && freeSessionCooldownEndMs > Date.now();
-  const canStart = freeOnCooldown ? false : (isFull ? userCreditsMinutes >= FULL_CREDITS_MIN_REQUIRED : true);
+  const val = sessionTypeRadio?.value || 'free';
+  const isFull = val === 'full';
+  const isExam = val === 'exam';
+  const freeOnCooldown = val === 'free' && freeSessionCooldownEndMs > Date.now();
+  const needsCredits = isFull || isExam;
+  const canStart = freeOnCooldown ? false : (needsCredits ? userCreditsMinutes >= FULL_CREDITS_MIN_REQUIRED : true);
   btnStartSession.disabled = !canStart;
-  btnStartSession.title = freeOnCooldown ? 'Free session is on cooldown' : (isFull && !canStart ? 'Full interview requires at least 1 min of credits' : '');
+  btnStartSession.title = freeOnCooldown ? 'Free session is on cooldown' : (needsCredits && !canStart ? 'Exam and Full interview require at least 1 min of credits' : '');
+}
+
+const examIntervalWrap = document.getElementById('exam-interval-wrap');
+const inputExamInterval = document.getElementById('input-exam-interval');
+
+function updateExamIntervalVisibility() {
+  const sessionTypeRadio = document.querySelector('input[name="session-type"]:checked');
+  const isExam = sessionTypeRadio?.value === 'exam';
+  if (examIntervalWrap) examIntervalWrap.classList.toggle('hidden', !isExam);
 }
 
 if (document.querySelectorAll('input[name="session-type"]').length) {
   document.querySelectorAll('input[name="session-type"]').forEach((r) => {
-    r.addEventListener('change', updateStartSessionButton);
+    r.addEventListener('change', () => {
+      updateStartSessionButton();
+      updateExamIntervalVisibility();
+    });
   });
 }
+updateExamIntervalVisibility();
+if (inputExamInterval) {
+  inputExamInterval.addEventListener('change', () => {
+    const val = parseInt(inputExamInterval.value, 10);
+    if (!isNaN(val)) inputExamInterval.value = Math.max(15, Math.min(30, val));
+  });
+}
+
+const EXAM_MODE_INSTRUCTIONS = 'I am writing a choose the correct answer exam. Give me only the right answer as response — only the answer option as response. Ignore any other website details; focus only on Q&A.';
 
 btnStartSession.addEventListener('click', () => {
   if (!window.floatingAPI?.startSession || btnStartSession.disabled) return;
   const sessionTypeRadio = document.querySelector('input[name="session-type"]:checked');
-  const sessionType = sessionTypeRadio?.value === 'full' ? 'full' : 'free';
+  const sessionType = sessionTypeRadio?.value === 'full' ? 'full' : (sessionTypeRadio?.value === 'exam' ? 'exam' : 'free');
   const creditsMinutes = sessionType === 'free' ? 10 : Math.max(0, userCreditsMinutes);
   const selectSpeechProvider = document.getElementById('select-speech-provider');
   const speechProvider = (selectSpeechProvider?.value === 'azure' || selectSpeechProvider?.value === 'deepgram') ? selectSpeechProvider.value : 'azure';
+  let instructions = (inputInstructions && inputInstructions.value) ? inputInstructions.value.trim() : '';
+  if (sessionType === 'exam') {
+    instructions = instructions ? instructions + '\n\n' + EXAM_MODE_INSTRUCTIONS : EXAM_MODE_INSTRUCTIONS;
+  }
+  let imageAutoIntervalSeconds = 30;
+  if (sessionType === 'exam' && inputExamInterval) {
+    const val = parseInt(inputExamInterval.value, 10);
+    if (!isNaN(val)) imageAutoIntervalSeconds = Math.max(15, Math.min(30, val));
+  }
   const config = {
     company: (inputCompany && inputCompany.value) ? inputCompany.value.trim() : '',
     position: (inputPosition && inputPosition.value) ? inputPosition.value.trim() : '',
     resume: (inputResume && inputResume.value) ? inputResume.value.trim() : '',
     language: (inputLanguage && inputLanguage.value) ? inputLanguage.value : 'en-US',
-    instructions: (inputInstructions && inputInstructions.value) ? inputInstructions.value.trim() : '',
+    instructions,
     sessionType,
     creditsMinutes,
     speechProvider,
+    imageAuto: sessionType === 'exam',
+    imageAutoIntervalSeconds: sessionType === 'exam' ? imageAutoIntervalSeconds : undefined,
   };
   window.floatingAPI.startSession(config);
 });

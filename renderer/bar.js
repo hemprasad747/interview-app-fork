@@ -1,6 +1,7 @@
 const btnMic = document.getElementById('btn-mic');
 const btnSystemAudio = document.getElementById('btn-system-audio');
 const btnManual = document.getElementById('btn-manual');
+const btnPhotoAnalysis = document.getElementById('btn-photo-analysis');
 const barManualSection = document.getElementById('bar-manual-section');
 const barQuestionInput = document.getElementById('bar-question-input');
 const barBtnSend = document.getElementById('bar-btn-send');
@@ -902,8 +903,85 @@ function sendBarQuestion() {
   if (barQuestionInput) barQuestionInput.value = '';
 }
 
+const IMAGE_AUTO_INTERVAL_MIN_SEC = 15;
+const IMAGE_AUTO_INTERVAL_MAX_SEC = 30;
+const IMAGE_AUTO_INTERVAL_DEFAULT_MS = 30 * 1000;
+let photoAnalysisInProgress = false;
+let imageAutoIntervalId = null;
+
+/** Shared logic: capture screenshot, analyze, show in right panel. No button state. */
+async function doPhotoAnalysis() {
+  if (!window.floatingAPI?.takeScreenshot || !window.floatingAPI?.analyzeImage) return;
+  if (photoAnalysisInProgress) return;
+  photoAnalysisInProgress = true;
+  try {
+    const shot = await window.floatingAPI.takeScreenshot();
+    if (shot?.error || !shot?.imageBase64) {
+      if (window.floatingAPI?.showAnalysisInRight) {
+        window.floatingAPI.showAnalysisInRight({ question: 'Screen analysis', answer: 'Could not capture screen. ' + (shot?.error || 'Try again.') });
+      }
+      return;
+    }
+    let contextPrompt = '';
+    try {
+      const history = await (window.floatingAPI?.getConversationHistory?.() || Promise.resolve([]));
+      const lastUser = history.filter((m) => m.role === 'user').pop();
+      if (lastUser?.content) {
+        contextPrompt = `\n\nCurrent or recent interview question (use as context for your answer): "${lastUser.content.trim().slice(0, 500)}". Provide an answer the candidate could give, in first person, based on what you see in the image and this question.`;
+      }
+    } catch (_) {}
+    let sessionInstructions = '';
+    try {
+      const config = await (window.floatingAPI?.getSessionConfig?.() || Promise.resolve(null));
+      if (config?.instructions && typeof config.instructions === 'string' && config.instructions.trim()) {
+        sessionInstructions = `\n\nFollow these instructions from the session (apply to how you analyze and respond):\n${config.instructions.trim().slice(0, 1500)}`;
+      }
+    } catch (_) {}
+    const prompt = `You are helping an interviewee during a job interview. This image is a screenshot of the interviewer's shared screen or something the candidate is looking at. Describe briefly what you see (e.g. a whiteboard, a question, code, or a blank screen).${sessionInstructions}${contextPrompt || ' If there is a question or task visible, suggest a concise answer or response the candidate could give, in first person. Be brief and use Markdown for lists if needed.'}`;
+    const result = await window.floatingAPI.analyzeImage({ imageBase64: shot.imageBase64, prompt });
+    const answer = result?.text?.trim() || result?.error || 'Analysis failed.';
+    const questionLabel = 'Screen analysis';
+    if (window.floatingAPI?.appendConversation) window.floatingAPI.appendConversation(questionLabel, answer);
+    if (window.floatingAPI?.showAnalysisInRight) window.floatingAPI.showAnalysisInRight({ question: questionLabel, answer });
+  } catch (e) {
+    if (window.floatingAPI?.showAnalysisInRight) {
+      window.floatingAPI.showAnalysisInRight({ question: 'Screen analysis', answer: 'Error: ' + (e?.message || 'Analysis failed') });
+    }
+  } finally {
+    photoAnalysisInProgress = false;
+  }
+}
+
+async function runPhotoAnalysis() {
+  if (!btnPhotoAnalysis || !window.floatingAPI?.takeScreenshot || !window.floatingAPI?.analyzeImage) return;
+  btnPhotoAnalysis.disabled = true;
+  btnPhotoAnalysis.classList.add('photo-analysis-busy');
+  try {
+    await doPhotoAnalysis();
+  } finally {
+    btnPhotoAnalysis.disabled = false;
+    btnPhotoAnalysis.classList.remove('photo-analysis-busy');
+  }
+}
+
+function setImageAuto(enabled, intervalSeconds) {
+  if (imageAutoIntervalId) {
+    clearInterval(imageAutoIntervalId);
+    imageAutoIntervalId = null;
+  }
+  if (enabled) {
+    const sec = typeof intervalSeconds === 'number' && !isNaN(intervalSeconds)
+      ? Math.max(IMAGE_AUTO_INTERVAL_MIN_SEC, Math.min(IMAGE_AUTO_INTERVAL_MAX_SEC, intervalSeconds))
+      : IMAGE_AUTO_INTERVAL_MAX_SEC;
+    const ms = sec * 1000;
+    doPhotoAnalysis(); // run once immediately
+    imageAutoIntervalId = setInterval(() => doPhotoAnalysis(), ms);
+  }
+}
+
 if (btnManual) btnManual.addEventListener('click', toggleManualSection);
 if (barBtnSend) barBtnSend.addEventListener('click', sendBarQuestion);
+if (btnPhotoAnalysis) btnPhotoAnalysis.addEventListener('click', () => runPhotoAnalysis());
 if (barQuestionInput) {
   barQuestionInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendBarQuestion();
@@ -917,8 +995,12 @@ if (btnEndSession) {
   btnEndSession.addEventListener('click', () => {
     stopMic();
     stopSystemAudio();
+    setImageAuto(false);
     if (window.floatingAPI?.endSession) window.floatingAPI.endSession();
   });
+}
+if (window.floatingAPI?.onSessionEnded) {
+  window.floatingAPI.onSessionEnded(() => setImageAuto(false));
 }
 
 if (btnCollapse) {
@@ -971,6 +1053,7 @@ if (window.floatingAPI?.getSessionConfig) {
     if (cfg) {
       sessionType = cfg.sessionType || 'free';
       creditsMinutes = Math.max(0, Number(cfg.creditsMinutes) || (sessionType === 'free' ? 10 : 0));
+      if (cfg.imageAuto) setImageAuto(true, cfg.imageAutoIntervalSeconds);
     }
     if (window.floatingAPI?.getTimer) {
       window.floatingAPI.getTimer().then(updateCreditDisplay);
