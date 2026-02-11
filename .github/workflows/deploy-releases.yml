@@ -57,6 +57,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20  # allow long FTP uploads (e.g. large .exe)
     steps:
       - name: Download release files
         uses: actions/download-artifact@v4
@@ -72,4 +73,5 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           local-dir: ./deploy/
           server-dir: /domains/alphaviewai.com/public_html/releases/
-          timeout: 600000
+          # Longer timeout to avoid ECONNRESET on large uploads (control socket)
+          timeout: 1200000
