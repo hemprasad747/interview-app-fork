@@ -15,7 +15,7 @@ const sessionBarContainer = document.getElementById('session-bar-container');
 const barWaveIndicator = document.getElementById('bar-wave-indicator');
 
 /** Only generate answer after this much silence. No answer until this pause (e.g. 1 min question is fine). Use 5s so engine segment gaps don't flush mid-speech. */
-const SYSTEM_AUDIO_PAUSE_MS = 5000;
+const SYSTEM_AUDIO_PAUSE_MS = 2000;
 let audioContext = null;
 let analyser = null;
 let visualizerSource = null;
@@ -246,9 +246,12 @@ async function startAzureSpeech(keyOrToken, region, language, useToken = false) 
       ? sdk.SpeechConfig.fromAuthorizationToken(keyOrToken, region)
       : sdk.SpeechConfig.fromSubscription(keyOrToken, region);
     speechConfig.speechRecognitionLanguage = lang;
-    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '2000');
-    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, '350');
-    speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, '1');
+    // Optimize for accuracy over speed
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '5000'); // Increased for better accuracy
+    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationStrategy, 'Time');
+    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, '500'); // Increased for more accurate phrase detection
+    speechConfig.setProperty(sdk.PropertyId.Speech_StartEventSensitivity, 'medium'); // Reduced false starts
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, '3'); // More stable interim results
     const audioConfig = sdk.AudioConfig.fromDefaultMicrophoneInput();
     azureRecognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
     azureRecognizer.recognizing = (s, e) => {
@@ -715,9 +718,12 @@ async function startSystemAudio() {
       : sdk.SpeechConfig.fromSubscription(azureConfig.key, azureConfig.region);
     const lang = (azureConfig.language || 'en-US').trim() || 'en-US';
     speechConfig.speechRecognitionLanguage = lang;
-    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '2000');
-    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, '350');
-    speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, '1');
+    // Optimize for accuracy over speed
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '5000'); // Increased for better accuracy
+    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationStrategy, 'Time');
+    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, '500'); // Increased for more accurate phrase detection
+    speechConfig.setProperty(sdk.PropertyId.Speech_StartEventSensitivity, 'medium'); // Reduced false starts
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, '3'); // More stable interim results
     const audioConfig = sdk.AudioConfig.fromStreamInput(stream);
     systemAudioAzureRecognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
     systemAudioQuestionBuffer = '';

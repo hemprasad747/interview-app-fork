@@ -55,14 +55,16 @@ let systemAudioPauseTimer = null;
 let micQuestionBuffer = '';
 let micLiveBuffer = '';
 let micPauseTimer = null;
+let micFlushPending = false; // Track if we've flushed but might get more speech
+let micFlushPendingTimer = null;
 let deepgramSocket = null;
 let deepgramAudioContext = null;
 let deepgramProcessor = null;
 let deepgramSystemSocket = null;
 let deepgramSystemAudioContext = null;
 let deepgramSystemProcessor = null;
-/** Only generate answer after this much silence. No answer until this pause (e.g. 1 min question). Use 5s so engine segment gaps don't flush mid-speech. */
-const SYSTEM_AUDIO_PAUSE_MS = 5000;
+/** Only generate answer after this much silence. No answer until this pause (e.g. 1 min question). Use 2s for faster response. */
+const SYSTEM_AUDIO_PAUSE_MS = 2000;
 const SYSTEM_AUDIO_FLUSH_COOLDOWN_MS = 2500;
 let systemAudioLastFlushTime = 0;
 let historyAutoScroll = true;
@@ -294,6 +296,11 @@ function stopMic() {
     clearTimeout(micPauseTimer);
     micPauseTimer = null;
   }
+  if (micFlushPendingTimer) {
+    clearTimeout(micFlushPendingTimer);
+    micFlushPendingTimer = null;
+  }
+  micFlushPending = false;
   if ((micQuestionBuffer || '').trim()) {
     addTranscriptionToHistory(micQuestionBuffer.trim(), new Date(), 'mic');
     micQuestionBuffer = '';
@@ -316,6 +323,16 @@ function addTranscriptionToHistory(text, time, source = 'mic') {
 function appendMicTranscriptToHistory(transcript) {
   const t = (transcript || '').trim();
   if (!t) return;
+  
+  // If we have a pending flush but new speech arrived, cancel the pending flush
+  if (micFlushPending) {
+    micFlushPending = false;
+    if (micFlushPendingTimer) {
+      clearTimeout(micFlushPendingTimer);
+      micFlushPendingTimer = null;
+    }
+  }
+  
   micQuestionBuffer = (micQuestionBuffer ? micQuestionBuffer + ' ' : '') + t;
   if (micPauseTimer) clearTimeout(micPauseTimer);
   micPauseTimer = setTimeout(flushMicQuestion, SYSTEM_AUDIO_PAUSE_MS);
@@ -326,11 +343,45 @@ function flushMicQuestion() {
     clearTimeout(micPauseTimer);
     micPauseTimer = null;
   }
-  const q = (micQuestionBuffer || '').trim();
-  micQuestionBuffer = '';
-  micLiveBuffer = '';
-  liveTranscriptBuffer = '';
-  if (q) addTranscriptionToHistory(q, new Date(), 'mic');
+  // Combine buffer and live buffer to capture the complete question
+  // This ensures we don't lose interim results when flushing
+  const buf = (micQuestionBuffer || '').trim();
+  const live = (micLiveBuffer || '').trim();
+  const q = buf ? (live ? buf + ' ' + live : buf) : live;
+  
+  if (!q) return;
+  
+  // Mark as pending flush - wait a bit to see if speech continues
+  micFlushPending = true;
+  
+  // Clear any existing pending timer
+  if (micFlushPendingTimer) {
+    clearTimeout(micFlushPendingTimer);
+    micFlushPendingTimer = null;
+  }
+  
+  // Wait 1.5 seconds more - if no new speech arrives, then flush and trigger AI
+  micFlushPendingTimer = setTimeout(() => {
+    if (micFlushPending) {
+      // Final flush - no new speech arrived, safe to send
+      const finalBuf = (micQuestionBuffer || '').trim();
+      const finalLive = (micLiveBuffer || '').trim();
+      const finalQ = finalBuf ? (finalLive ? finalBuf + ' ' + finalLive : finalBuf) : finalLive;
+      
+      micQuestionBuffer = '';
+      micLiveBuffer = '';
+      liveTranscriptBuffer = '';
+      micFlushPending = false;
+      micFlushPendingTimer = null;
+      
+      if (finalQ) {
+        addTranscriptionToHistory(finalQ, new Date(), 'mic');
+        renderHistory();
+        // Auto-trigger AI for mic questions - AI will use transcript history instead of direct question
+        if (!aiBusy && window.floatingAPI?.callAIStream) askAiWithQuestion('');
+      }
+    }
+  }, 1500); // Additional 1.5s grace period after initial pause
 }
 
 function getMicLiveCombined() {
@@ -409,12 +460,12 @@ async function startAzureSpeech(keyOrToken, region, language, useToken = false) 
       ? sdk.SpeechConfig.fromAuthorizationToken(keyOrToken, region)
       : sdk.SpeechConfig.fromSubscription(keyOrToken, region);
     speechConfig.speechRecognitionLanguage = lang;
-    // Speed up "final" results (end-of-utterance) for low latency
-    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '2000');
+    // Optimize for accuracy over speed
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '5000'); // Increased from 2000ms for better accuracy
     speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationStrategy, 'Time');
-    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, '350');
-    speechConfig.setProperty(sdk.PropertyId.Speech_StartEventSensitivity, 'high');
-    speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, '1');
+    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, '500'); // Increased from 350ms for more accurate phrase detection
+    speechConfig.setProperty(sdk.PropertyId.Speech_StartEventSensitivity, 'medium'); // Changed from 'high' to reduce false starts
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, '3'); // Increased from 1 for more stable/accurate interim results
     const audioConfig = sdk.AudioConfig.fromDefaultMicrophoneInput();
     azureRecognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
     liveTranscriptBuffer = '';
@@ -422,6 +473,20 @@ async function startAzureSpeech(keyOrToken, region, language, useToken = false) 
       if (!sessionActive || !isMicRecording) return;
       if (e.result.reason === sdk.ResultReason.RecognizingSpeech && e.result.text) {
         micLiveBuffer = (e.result.text || '').trim();
+        // Reset flush timer when interim results arrive to prevent premature flushing
+        // This ensures continuous speech accumulates properly even after pauses
+        if (micQuestionBuffer && micPauseTimer) {
+          clearTimeout(micPauseTimer);
+          micPauseTimer = setTimeout(flushMicQuestion, SYSTEM_AUDIO_PAUSE_MS);
+        }
+        // Cancel pending flush if new speech continues
+        if (micFlushPending) {
+          micFlushPending = false;
+          if (micFlushPendingTimer) {
+            clearTimeout(micFlushPendingTimer);
+            micFlushPendingTimer = null;
+          }
+        }
         liveTranscriptBuffer = getMicLiveCombined();
         setHistoryAutoScroll(true);
         renderHistory();
@@ -581,6 +646,20 @@ async function startDeepgramMic(apiKey, language) {
         micLiveBuffer = '';
       } else {
         micLiveBuffer = transcript;
+        // Reset flush timer when interim results arrive to prevent premature flushing
+        // This ensures continuous speech accumulates properly even after pauses
+        if (micQuestionBuffer && micPauseTimer) {
+          clearTimeout(micPauseTimer);
+          micPauseTimer = setTimeout(flushMicQuestion, SYSTEM_AUDIO_PAUSE_MS);
+        }
+        // Cancel pending flush if new speech continues
+        if (micFlushPending) {
+          micFlushPending = false;
+          if (micFlushPendingTimer) {
+            clearTimeout(micFlushPendingTimer);
+            micFlushPendingTimer = null;
+          }
+        }
       }
       liveTranscriptBuffer = getMicLiveCombined();
       setHistoryAutoScroll(true);
@@ -667,6 +746,20 @@ async function startMic() {
       appendMicTranscriptToHistory(final);
     }
     micLiveBuffer = interim;
+    // Reset flush timer when interim results arrive to prevent premature flushing
+    // This ensures continuous speech accumulates properly even after pauses
+    if (interim && micQuestionBuffer && micPauseTimer) {
+      clearTimeout(micPauseTimer);
+      micPauseTimer = setTimeout(flushMicQuestion, SYSTEM_AUDIO_PAUSE_MS);
+    }
+    // Cancel pending flush if new speech continues
+    if (interim && micFlushPending) {
+      micFlushPending = false;
+      if (micFlushPendingTimer) {
+        clearTimeout(micFlushPendingTimer);
+        micFlushPendingTimer = null;
+      }
+    }
     liveTranscriptBuffer = getMicLiveCombined();
     setHistoryAutoScroll(true);
     renderHistory();
@@ -756,7 +849,8 @@ function flushSystemAudioQuestion() {
   systemAudioLastFlushTime = Date.now();
   if (q) addTranscriptionToHistory(q, new Date(), 'system');
   renderHistory();
-  if (q && !aiBusy && window.floatingAPI?.callAIStream) askAiWithQuestion(q);
+  // Auto-trigger AI - AI will use transcript history instead of direct question
+  if (q && !aiBusy && window.floatingAPI?.callAIStream) askAiWithQuestion('');
 }
 
 async function startDeepgramSystemAudio(apiKey, language) {
@@ -872,12 +966,12 @@ async function startSystemAudio() {
       : sdk.SpeechConfig.fromSubscription(azureConfig.key, azureConfig.region);
     const sysLang = (azureConfig.language || 'en-US').trim() || 'en-US';
     speechConfig.speechRecognitionLanguage = sysLang;
-    // Speed up "final" results (end-of-utterance) for low latency
-    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '2000');
+    // Optimize for accuracy over speed
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '5000'); // Increased for better accuracy
     speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationStrategy, 'Time');
-    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, '350');
-    speechConfig.setProperty(sdk.PropertyId.Speech_StartEventSensitivity, 'high');
-    speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, '1');
+    speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, '500'); // Increased for more accurate phrase detection
+    speechConfig.setProperty(sdk.PropertyId.Speech_StartEventSensitivity, 'medium'); // Reduced false starts
+    speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, '3'); // More stable interim results
     const audioConfig = sdk.AudioConfig.fromStreamInput(audioStream);
     systemAudioAzureRecognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
     systemAudioQuestionBuffer = '';
@@ -1037,19 +1131,13 @@ function renderHistory() {
     const q = it.text || '—';
     const timeStr = it.time ? formatTimePM(it.time) : '06:56 PM';
     const label = it.source === 'system' ? 'System' : it.source === 'mic' ? 'Mic' : 'Client 1';
-    const canAsk = (it.source === 'mic' || it.source === 'system') && q.length > 3;
     const isLeft = it.source === 'system';
     const sideClass = isLeft ? 'history-item-left' : 'history-item-right';
     const el = document.createElement('div');
-    el.className = 'history-item ' + sideClass + (canAsk ? ' history-item-askable' : '');
+    el.className = 'history-item ' + sideClass;
     el.innerHTML =
-      '<div class="history-item-header">' + escapeHtml(label) + ' – ' + timeStr +
-      (canAsk ? ' <button type="button" class="history-ask-btn" title="Get AI answer">→ Ask</button>' : '') + '</div>' +
+      '<div class="history-item-header">' + escapeHtml(label) + ' – ' + timeStr + '</div>' +
       '<div class="history-item-q">' + escapeHtml(q) + '</div>';
-    if (canAsk) {
-      const btn = el.querySelector('.history-ask-btn');
-      if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); askAiWithQuestion(q); });
-    }
     historyList.appendChild(el);
   }
   if (liveTranscriptBuffer && liveTranscriptBuffer.trim()) {
@@ -1064,20 +1152,10 @@ function renderHistory() {
     const combined = (systemAudioQuestionBuffer + (systemAudioLiveBuffer ? ' ' + systemAudioLiveBuffer : '')).trim();
     if (combined) {
       const el = document.createElement('div');
-      el.className = 'history-item history-item-left history-item-live history-item-askable';
+      el.className = 'history-item history-item-left history-item-live';
       el.innerHTML =
-        '<div class="history-item-header">System – Live <button type="button" class="history-ask-btn" title="Get AI answer now">→ Ask</button></div>' +
+        '<div class="history-item-header">System – Live</div>' +
         '<div class="history-item-q">' + escapeHtml(combined) + '<span class="live-cursor">▌</span></div>';
-      const btn = el.querySelector('.history-ask-btn');
-      if (btn) btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (combined.trim()) {
-          systemAudioQuestionBuffer = '';
-          systemAudioLiveBuffer = '';
-          if (systemAudioPauseTimer) { clearTimeout(systemAudioPauseTimer); systemAudioPauseTimer = null; }
-          askAiWithQuestion(combined.trim());
-        }
-      });
       historyList.appendChild(el);
     }
   }

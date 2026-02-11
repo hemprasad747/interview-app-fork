@@ -1506,7 +1506,7 @@ ipcMain.handle('call-ai', async (_event, { transcript, systemPrompt }) => {
   } catch (e) { /* fallback */ }
   // Fallback: local env
   const cfg = getAzureOpenAIConfig();
-  if (!cfg) return { error: 'AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT required.' };
+  if (!cfg) return { error: 'Unable to connect to AI service. Please check your API configuration or contact support.' };
   try {
     const url = `${cfg.endpoint}/openai/deployments/${cfg.deployment}/chat/completions?api-version=2025-01-01-preview`;
     const res = await fetch(url, {
@@ -1533,6 +1533,14 @@ ipcMain.handle('call-ai-stream', async (event, { messages }) => {
   const auth = getAuthData();
   const headers = { 'Content-Type': 'application/json' };
   if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
+  
+  // Check authentication first
+  if (!auth?.token) {
+    sender.send('ai-stream-error', 'Please sign in to use AI features. Go to Settings to sign in.');
+    return;
+  }
+  
+  let cfg = null; // For fallback
   try {
     const res = await fetch(`${API_BASE}/openaiChatStream`, {
       method: 'POST',
@@ -1574,11 +1582,32 @@ ipcMain.handle('call-ai-stream', async (event, { messages }) => {
       sender.send('ai-stream-done');
       return;
     }
-  } catch (_) { /* fallback */ }
-  // Fallback: local env
-  const cfg = getAzureOpenAIConfig();
+    // If API call failed, check why
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      const errorMsg = errorData?.error || errorData?.message || `API error (${res.status})`;
+      if (res.status === 401 || res.status === 403) {
+        sender.send('ai-stream-error', 'Authentication failed. Please sign in again in Settings.');
+      } else if (res.status === 429) {
+        sender.send('ai-stream-error', 'Rate limit exceeded. Please try again in a moment.');
+      } else {
+        sender.send('ai-stream-error', `Unable to connect to AI service: ${errorMsg}`);
+      }
+      return;
+    }
+  } catch (e) {
+    // Network error - try fallback only if local config exists
+    cfg = getAzureOpenAIConfig();
+    if (!cfg) {
+      sender.send('ai-stream-error', 'Network error: Unable to connect to AI service. Please check your internet connection.');
+      return;
+    }
+    // Continue to local Azure OpenAI fallback below
+  }
+  // Fallback: local Azure OpenAI (only reached if network error occurred and config exists)
+  if (!cfg) cfg = getAzureOpenAIConfig();
   if (!cfg) {
-    sender.send('ai-stream-error', 'AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT required.');
+    sender.send('ai-stream-error', 'Unable to connect to AI service. Please check your internet connection or contact support.');
     return;
   }
   try {
@@ -1716,7 +1745,7 @@ ipcMain.handle('analyze-image', async (_event, { imageBase64, prompt }) => {
   } catch (_) { /* fallback */ }
   // Fallback: local env
   const cfg = getAzureOpenAIConfig();
-  if (!cfg) return { error: 'AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT required.' };
+  if (!cfg) return { error: 'Unable to connect to AI service. Please check your API configuration or contact support.' };
   try {
     const url = `${cfg.endpoint}/openai/deployments/${cfg.deployment}/chat/completions?api-version=2025-01-01-preview`;
     const res = await fetch(url, {

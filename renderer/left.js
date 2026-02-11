@@ -72,24 +72,13 @@ async function renderHistory() {
     const q = it.text || '—';
     const timeStr = formatTimePM(it.time);
     const label = it.source === 'system' ? 'Interviewer' : it.source === 'mic' ? 'You' : 'Q&A';
-    const canAsk = (it.source === 'mic' || it.source === 'system') && q.length > 3 && !q.startsWith('[') && !it.answer;
     const isLeft = it.source === 'system';
     const sideClass = isLeft ? 'history-item-left' : 'history-item-right';
     const el = document.createElement('div');
     el.className = 'history-item ' + sideClass;
     el.innerHTML =
-      '<div class="history-item-header">' + escapeHtml(label) + ' – ' + timeStr +
-      (canAsk ? ' <button type="button" class="history-ask-btn" title="Get AI answer">→ Ask</button>' : '') + '</div>' +
+      '<div class="history-item-header">' + escapeHtml(label) + ' – ' + timeStr + '</div>' +
       '<div class="history-item-q">' + escapeHtml(q) + '</div>';
-    if (canAsk) {
-      const btn = el.querySelector('.history-ask-btn');
-      if (btn) {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (window.floatingAPI?.requestAskQuestion) window.floatingAPI.requestAskQuestion(q);
-        });
-      }
-    }
     historyList.appendChild(el);
   }
   if (live.mic && live.mic.trim()) {

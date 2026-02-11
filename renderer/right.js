@@ -17,25 +17,31 @@ let currentAnswerIndex = 0;
 let liveAnswerContent = '';
 let liveQuestionContent = '';
 
-const LAST_PAIRS_FOR_REQUEST = 4;
+const LAST_PAIRS_FOR_REQUEST = 6; // More conversation history for ChatGPT-like continuity
+const MAX_RECENT_TRANSCRIPT_PARTS = 4;
+
+/** Return only the current question - no merging with previous transcript to avoid context bleed. */
+function mergeRecentTranscriptWithQuestion(transcript, currentQuestion) {
+  // Return only the current question - no merging with previous transcript entries
+  // This ensures each question is completely independent
+  return (typeof currentQuestion === 'string' ? currentQuestion : '').trim();
+}
+
 
 function buildSystemPrompt(config, interviewSummary) {
   if (!config || typeof config !== 'object') return DEFAULT_SYSTEM_PROMPT;
   const lang = (config.language || 'en-US').trim() || 'en-US';
-  const parts = [
-    'You are the interviewee (the candidate) in a job interview. You must ONLY answer as the candidate, in first person (I, my, me). Never act as an AI assistant: do not greet ("Good morning", "How can I help"), do not offer to help or ask "Is there something specific you would like to address". Never say you are an AI, a model, or an assistant. Only answer the interview question that was asked—do not initiate conversation or ask the user questions back.',
-    'Answer as if in a live interview: confident and relevant to the role. No meta-commentary or assistant-style phrasing.',
-    `Answer entirely in the language for locale "${lang}". All your responses must be in this language only.`,
-  ];
-  if (config.company) parts.push(`Company you are interviewing with: ${config.company}.`);
-  if (config.position) parts.push(`Role you are interviewing for: ${config.position}.`);
-  if (config.resume) parts.push(`Your resume/summary (this is you):\n${config.resume}`);
-  if (config.instructions) parts.push(`Additional guidance for how you should answer:\n${config.instructions}`);
-  if (interviewSummary && typeof interviewSummary === 'string' && interviewSummary.trim()) {
-    parts.push(`Brief context from earlier in this interview (use for follow-ups): ${interviewSummary.trim()}`);
-  }
-  parts.push('Give complete, sufficient answers. Use standard Markdown so the answer displays clearly: use **bold** for key terms, "- " or "* " at the start of a line for bullet lists, "1. " "2. " for numbered lists, and blank lines between paragraphs. Use ```language ... ``` for code. Use the conversation history and the brief context above for follow-up questions.');
-  return parts.join('\n');
+  const parts = [];
+  
+  // Only include basic config - let Azure instructions handle behavior
+  // NO interview summary or context - each question is independent
+  if (config.company) parts.push(`Company: ${config.company}`);
+  if (config.position) parts.push(`Role: ${config.position}`);
+  if (config.resume) parts.push(`Resume:\n${config.resume}`);
+  if (config.instructions) parts.push(`Instructions:\n${config.instructions}`);
+  parts.push(`Language: ${lang}`);
+  
+  return parts.length > 0 ? parts.join('\n\n') : DEFAULT_SYSTEM_PROMPT;
 }
 
 function escapeHtml(s) {
@@ -181,18 +187,16 @@ function onStreamError(err) {
 }
 
 async function askAiWithQuestion(q) {
-  if (!q || aiBusy || !window.floatingAPI?.callAIStream) return;
+  if (aiBusy || !window.floatingAPI?.callAIStream) return;
   aiBusy = true;
   if (aiText) { aiText.textContent = ''; aiText.innerHTML = ''; delete aiText.dataset.rawBuffer; }
-  setQuestionBlock(typeof q === 'string' ? q : '');
-  showAiState('loading');
-
+  
   const handleChunk = (e) => onStreamChunk(e.detail);
   const handleDone = () => {
     window.removeEventListener('ai-stream-chunk', handleChunk);
     window.removeEventListener('ai-stream-done', handleDone);
     window.removeEventListener('ai-stream-error', handleError);
-    onStreamDone(q);
+    onStreamDone(actualQuestion);
   };
   const handleError = (e) => {
     window.removeEventListener('ai-stream-chunk', handleChunk);
@@ -205,17 +209,41 @@ async function askAiWithQuestion(q) {
   window.addEventListener('ai-stream-done', handleDone);
   window.addEventListener('ai-stream-error', handleError);
 
-  const [config, conversation, interviewSummary] = await Promise.all([
+  const [config, , , transcript] = await Promise.all([
     window.floatingAPI?.getSessionConfig?.() || Promise.resolve(null),
     window.floatingAPI?.getConversationHistory?.() || Promise.resolve([]),
     window.floatingAPI?.getInterviewSummary?.() || Promise.resolve(''),
+    window.floatingAPI?.getTranscriptHistory?.() || Promise.resolve([]),
   ]);
-  const systemPrompt = buildSystemPrompt(config, interviewSummary);
-  const recent = Array.isArray(conversation) ? conversation.slice(-LAST_PAIRS_FOR_REQUEST * 2) : [];
+  
+  // Get the current question - use transcript to find latest unanswered question if q is empty
+  let actualQuestion = q || '';
+  if (!actualQuestion && Array.isArray(transcript) && transcript.length > 0) {
+    // Get the latest transcript entry (most recent question)
+    for (let i = transcript.length - 1; i >= 0; i--) {
+      const t = transcript[i];
+      if (t && t.text && !t.text.startsWith('[')) {
+        actualQuestion = t.text.trim();
+        break;
+      }
+    }
+  }
+  
+  if (!actualQuestion) {
+    aiBusy = false;
+    return;
+  }
+  
+  setQuestionBlock(actualQuestion);
+  showAiState('loading');
+  
+  // No interview summary - each question is completely independent
+  const systemPrompt = buildSystemPrompt(config, null);
+  // No transcript merging - send only the current question
+  const userContent = actualQuestion;
   const messages = [
     { role: 'system', content: systemPrompt },
-    ...recent.map((m) => ({ role: m.role, content: m.content })),
-    { role: 'user', content: q },
+    { role: 'user', content: userContent },
   ];
 
   try {
