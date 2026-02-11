@@ -70,8 +70,8 @@ jobs:
         with:
           # Use hostname (not IP) and no scheme (no "ftp://")
           server: alphaviewai.com
-          username: ${{ secrets.FTP_USER }}
-          password: ${{ secrets.FTP_PASS }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
           port: 21
           protocol: ftps
           security: loose
