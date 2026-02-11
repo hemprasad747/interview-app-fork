@@ -68,10 +68,17 @@ jobs:
       - name: Deploy to Hostinger via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.FTP_SERVER }}
+          # Use hostname (not IP) and no scheme (no "ftp://")
+          server: alphaviewai.com
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
+          # Prefer FTPS to avoid control-socket resets on plain FTP
+          protocol: ftps
+          port: 21
+          security: loose
           local-dir: ./deploy/
           server-dir: /domains/alphaviewai.com/public_html/releases/
+          dangerous-clean-slate: false
+          log-level: verbose
           # Longer timeout to avoid ECONNRESET on large uploads (control socket)
           timeout: 1200000
