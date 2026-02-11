@@ -34,7 +34,6 @@ jobs:
           git add package.json package-lock.json
           git diff --staged --quiet || git commit -m "chore: bump version [skip ci]"
           git push
-
       - name: Build Windows installer
         run: npx electron-builder --win
         env:
@@ -47,7 +46,6 @@ jobs:
           Copy-Item "dist/AlphaViewAI Setup*.exe" deploy/
           Copy-Item "dist/AlphaViewAI Setup*.exe.blockmap" deploy/ -ErrorAction SilentlyContinue
           Get-ChildItem deploy
-
       - name: Upload release files
         uses: actions/upload-artifact@v4
         with:
@@ -57,7 +55,6 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 20  # allow long FTP uploads (e.g. large .exe)
     steps:
       - name: Download release files
         uses: actions/download-artifact@v4
@@ -65,19 +62,12 @@ jobs:
           name: release-files
           path: deploy
 
-      - name: Deploy to Hostinger via FTPS
+      - name: Deploy to Hostinger via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          # Use hostname (not IP) and no scheme (no "ftp://")
-          server: alphaviewai.com
+          server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          port: 21
-          protocol: ftps
-          security: loose
-          server-dir: /domains/alphaviewai.com/public_html/releases/
           local-dir: ./deploy/
-          dangerous-clean-slate: false
-          log-level: verbose
-          # Longer timeout to avoid ECONNRESET on large uploads (control socket)
-          timeout: 1200000
+          server-dir: /domains/alphaviewai.com/public_html/releases/
+          timeout: 600000
