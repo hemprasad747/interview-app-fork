@@ -1223,8 +1223,19 @@ async function askAiWithQuestion(q) {
     { role: 'user', content: q },
   ];
 
+  // Get selected model from session config, default to gpt-4o-mini
+  let selectedModel = 'gpt-4o-mini';
   try {
-    await window.floatingAPI.callAIStream({ messages });
+    const config = await (window.floatingAPI?.getSessionConfig?.() || Promise.resolve(null));
+    if (config && config.aiModel) {
+      selectedModel = config.aiModel;
+    }
+  } catch (_) {
+    // Fallback to default if config fetch fails
+  }
+
+  try {
+    await window.floatingAPI.callAIStream({ messages, model: selectedModel });
   } catch (e) {
     handleError({ detail: e.message || 'Request failed' });
   }

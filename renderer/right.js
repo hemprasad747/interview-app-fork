@@ -246,8 +246,11 @@ async function askAiWithQuestion(q) {
     { role: 'user', content: userContent },
   ];
 
+  // Get selected model from config, default to gpt-4o-mini
+  const selectedModel = (config && config.aiModel) ? config.aiModel : 'gpt-4o-mini';
+
   try {
-    await window.floatingAPI.callAIStream({ messages });
+    await window.floatingAPI.callAIStream({ messages, model: selectedModel });
   } catch (e) {
     handleError({ detail: e.message || 'Request failed' });
   }

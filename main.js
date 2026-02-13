@@ -1472,12 +1472,21 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 app.on('will-quit', () => { globalShortcut.unregisterAll(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 
-function getAzureOpenAIConfig() {
-  const apiKey = process.env.AZURE_OPENAI_API_KEY;
-  const endpoint = (process.env.AZURE_OPENAI_ENDPOINT || '').replace(/\/$/, '');
-  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o-mini';
-  if (!apiKey || !endpoint) return null;
-  return { apiKey, endpoint, deployment };
+function getAzureFoundryConfig(model = null) {
+  const apiKey = process.env.AZURE_FOUNDRY_API_KEY || process.env.AZURE_OPENAI_API_KEY; // Support both for migration
+  const resourceName = process.env.AZURE_FOUNDRY_RESOURCE_NAME;
+  const projectName = process.env.AZURE_FOUNDRY_PROJECT_NAME || 'proj-default';
+  const defaultModel = process.env.AZURE_FOUNDRY_MODEL || 'gpt-4o-mini';
+  const selectedModel = model || defaultModel;
+  const apiVersion = process.env.AZURE_FOUNDRY_API_VERSION || '2024-05-01-preview';
+
+  if (!apiKey || !resourceName) return null;
+
+  // Foundry inference endpoint format (Azure AI inference endpoint):
+  // https://<resource-name>.services.ai.azure.com/models
+  const endpoint = `https://${resourceName}.services.ai.azure.com/models`;
+
+  return { apiKey, endpoint, projectName, model: selectedModel, resourceName, apiVersion };
 }
 
 // AI: non-streaming (fallback)
@@ -1504,15 +1513,22 @@ ipcMain.handle('call-ai', async (_event, { transcript, systemPrompt }) => {
     if (data.error) return { error: data.error.message };
     if (data.choices?.[0]?.message?.content) return { text: data.choices[0].message.content };
   } catch (e) { /* fallback */ }
-  // Fallback: local env
-  const cfg = getAzureOpenAIConfig();
+  // Fallback: local env (Foundry)
+  const cfg = getAzureFoundryConfig();
   if (!cfg) return { error: 'Unable to connect to AI service. Please check your API configuration or contact support.' };
   try {
-    const url = `${cfg.endpoint}/openai/deployments/${cfg.deployment}/chat/completions?api-version=2025-01-01-preview`;
+    // Foundry endpoint format: models/chat/completions (Azure AI inference endpoint)
+    const url = `${cfg.endpoint}/chat/completions?api-version=${cfg.apiVersion}`;
+    // Transform max_tokens -> max_completion_tokens for OpenAI v1-style models
+    const requestBody = { ...body, model: cfg.model };
+    if (requestBody.max_tokens != null && requestBody.max_completion_tokens == null) {
+      requestBody.max_completion_tokens = requestBody.max_tokens;
+      delete requestBody.max_tokens;
+    }
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': cfg.apiKey },
-      body: JSON.stringify(body),
+      body: JSON.stringify(requestBody),
     });
     const data = await res.json();
     if (data.error) return { error: data.error.message };
@@ -1522,14 +1538,16 @@ ipcMain.handle('call-ai', async (_event, { transcript, systemPrompt }) => {
   }
 });
 
-// AI: streaming with full conversation context (Azure OpenAI)
-ipcMain.handle('call-ai-stream', async (event, { messages }) => {
+// AI: streaming with full conversation context (Azure Foundry)
+ipcMain.handle('call-ai-stream', async (event, { messages, model }) => {
   const sender = event.sender;
   if (!Array.isArray(messages) || messages.length === 0) {
     sender.send('ai-stream-error', 'Messages required.');
     return;
   }
   const body = { messages, max_tokens: 512, temperature: 0.2, top_p: 1 };
+  // Include model in body for backend to use
+  if (model) body.model = model;
   const auth = getAuthData();
   const headers = { 'Content-Type': 'application/json' };
   if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
@@ -1597,25 +1615,32 @@ ipcMain.handle('call-ai-stream', async (event, { messages }) => {
     }
   } catch (e) {
     // Network error - try fallback only if local config exists
-    cfg = getAzureOpenAIConfig();
+    cfg = getAzureFoundryConfig(model);
     if (!cfg) {
       sender.send('ai-stream-error', 'Network error: Unable to connect to AI service. Please check your internet connection.');
       return;
     }
-    // Continue to local Azure OpenAI fallback below
+    // Continue to local Azure Foundry fallback below
   }
-  // Fallback: local Azure OpenAI (only reached if network error occurred and config exists)
-  if (!cfg) cfg = getAzureOpenAIConfig();
+  // Fallback: local Azure Foundry (only reached if network error occurred and config exists)
+  if (!cfg) cfg = getAzureFoundryConfig(model);
   if (!cfg) {
     sender.send('ai-stream-error', 'Unable to connect to AI service. Please check your internet connection or contact support.');
     return;
   }
   try {
-    const url = `${cfg.endpoint}/openai/deployments/${cfg.deployment}/chat/completions?api-version=2025-01-01-preview`;
+    // Foundry endpoint format: models/chat/completions (Azure AI inference endpoint)
+    const url = `${cfg.endpoint}/chat/completions?api-version=${cfg.apiVersion}`;
+    // Transform max_tokens -> max_completion_tokens for OpenAI v1-style models
+    const requestBody = { ...body, model: cfg.model, stream: true };
+    if (requestBody.max_tokens != null && requestBody.max_completion_tokens == null) {
+      requestBody.max_completion_tokens = requestBody.max_tokens;
+      delete requestBody.max_tokens;
+    }
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': cfg.apiKey },
-      body: JSON.stringify({ ...body, stream: true }),
+      body: JSON.stringify(requestBody),
     });
     if (!res.ok) {
       const err = await res.text();
@@ -1743,11 +1768,14 @@ ipcMain.handle('analyze-image', async (_event, { imageBase64, prompt }) => {
     if (data.text) return { text: data.text };
     if (data.error) return { error: data.error.message };
   } catch (_) { /* fallback */ }
-  // Fallback: local env
-  const cfg = getAzureOpenAIConfig();
+  // Fallback: local env (Foundry)
+  const cfg = getAzureFoundryConfig();
   if (!cfg) return { error: 'Unable to connect to AI service. Please check your API configuration or contact support.' };
   try {
-    const url = `${cfg.endpoint}/openai/deployments/${cfg.deployment}/chat/completions?api-version=2025-01-01-preview`;
+    // Foundry endpoint format: /models/<model-name>/chat/completions
+    // Note: For vision models, use a model that supports vision (e.g., gpt-4.1)
+    const visionModel = cfg.model === 'gpt-4o-mini' ? 'gpt-4.1' : cfg.model; // Fallback to vision-capable model
+    const url = `${cfg.endpoint}/models/${visionModel}/chat/completions?api-version=${cfg.apiVersion}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': cfg.apiKey },
