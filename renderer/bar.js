@@ -1,6 +1,7 @@
 const btnMic = document.getElementById('btn-mic');
 const btnSystemAudio = document.getElementById('btn-system-audio');
 const btnManual = document.getElementById('btn-manual');
+const btnAiBar = document.getElementById('btn-ai-bar');
 const btnPhotoAnalysis = document.getElementById('btn-photo-analysis');
 const barManualSection = document.getElementById('bar-manual-section');
 const barQuestionInput = document.getElementById('bar-question-input');
@@ -303,7 +304,9 @@ function buildDeepgramStreamingUrl(language) {
     sample_rate: '16000',
     language: lang,
     model: 'nova-2',
-    interim_results: 'true',
+    // More accurate, sentence-level results (no partials)
+    interim_results: 'false',
+    utterances: 'true',
     punctuate: 'true',
     smart_format: 'true',
   });
@@ -315,7 +318,8 @@ function createDeepgramPcmSender(socket, contextSampleRate) {
   const ratio = contextSampleRate / targetRate;
   return function (float32) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    const len = Math.floor(float32.length / ratio);
+    // Larger chunks for more context per request (slightly more delay, higher accuracy)
+    const len = Math.floor(float32.length / ratio / 2) * 2 || Math.floor(float32.length / ratio);
     const int16 = new Int16Array(len);
     for (let i = 0; i < len; i++) {
       const v = float32[Math.floor(i * ratio)];
@@ -909,6 +913,24 @@ function sendBarQuestion() {
   if (barQuestionInput) barQuestionInput.value = '';
 }
 
+/** Trigger AI using current typed question + live mic transcript (mic context). */
+function triggerBarAiWithMic() {
+  if (!window.floatingAPI?.requestAskQuestion) return;
+  const typed = (barQuestionInput?.value || '').trim();
+  const mic = (getMicLiveCombined() || '').trim();
+  const combined = (typed && mic) ? `${typed} ${mic}` : (typed || mic);
+  if (!combined) return;
+  // Bypass mic pause delay – flush what we have and clear buffers
+  if (micPauseTimer) {
+    clearTimeout(micPauseTimer);
+    micPauseTimer = null;
+  }
+  micQuestionBuffer = '';
+  micLiveBuffer = '';
+  window.floatingAPI.requestAskQuestion(combined);
+  if (barQuestionInput) barQuestionInput.value = '';
+}
+
 const IMAGE_AUTO_INTERVAL_MIN_SEC = 15;
 const IMAGE_AUTO_INTERVAL_MAX_SEC = 30;
 const IMAGE_AUTO_INTERVAL_DEFAULT_MS = 30 * 1000;
@@ -986,11 +1008,19 @@ function setImageAuto(enabled, intervalSeconds) {
 }
 
 if (btnManual) btnManual.addEventListener('click', toggleManualSection);
+if (btnAiBar) btnAiBar.addEventListener('click', triggerBarAiWithMic);
 if (barBtnSend) barBtnSend.addEventListener('click', sendBarQuestion);
 if (btnPhotoAnalysis) btnPhotoAnalysis.addEventListener('click', () => runPhotoAnalysis());
 if (barQuestionInput) {
   barQuestionInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') sendBarQuestion();
+    if (e.key === 'Enter') {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        triggerBarAiWithMic();
+      } else {
+        sendBarQuestion();
+      }
+    }
   });
 }
 

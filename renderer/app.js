@@ -8,6 +8,7 @@ const btnEndSession = document.getElementById('btn-end-session');
 const barTimer = document.getElementById('bar-timer');
 const questionInput = document.getElementById('question-input');
 const btnAskAi = document.getElementById('btn-ask-ai');
+const btnAskAiHeader = document.getElementById('btn-ask-ai-header');
 const aiPlaceholder = document.getElementById('ai-response-placeholder');
 const aiLoading = document.getElementById('ai-response-loading');
 const aiText = document.getElementById('ai-response-text');
@@ -29,10 +30,11 @@ let seconds = 0;
 let aiBusy = false;
 let sessionActive = false;
 let suppressIconClick = false;
-// Full conversation for follow-up context (user + assistant messages only; system added when sending). Keep 6 pairs (12 messages); send last 4 pairs per request for speed.
-const MAX_HISTORY_MESSAGES = 12;
-const LAST_PAIRS_FOR_REQUEST = 4;
-const MAX_HISTORY_DISPLAY = 6;
+// Full conversation for follow-up context (user + assistant messages only; system added when sending).
+// Keep 7 pairs (14 messages); send last 7 pairs per request for richer follow-up answers.
+const MAX_HISTORY_MESSAGES = 14;
+const LAST_PAIRS_FOR_REQUEST = 7;
+const MAX_HISTORY_DISPLAY = 7;
 let conversationHistory = [];
 // Live transcriptions from mic (shown in history)
 let transcriptHistory = [];
@@ -68,6 +70,7 @@ const SYSTEM_AUDIO_PAUSE_MS = 2000;
 const SYSTEM_AUDIO_FLUSH_COOLDOWN_MS = 2500;
 let systemAudioLastFlushTime = 0;
 let historyAutoScroll = true;
+let aiStreamBuffer = '';
 
 function setHistoryAutoScroll(enabled) {
   historyAutoScroll = !!enabled;
@@ -526,7 +529,9 @@ function buildDeepgramStreamingUrl(language) {
     sample_rate: '16000',
     language: lang,
     model: 'nova-2',
-    interim_results: 'true',
+    // More accurate, sentence-level results (no partials)
+    interim_results: 'false',
+    utterances: 'true',
     punctuate: 'true',
     smart_format: 'true',
   });
@@ -538,7 +543,8 @@ function createDeepgramPcmSender(socket, contextSampleRate) {
   const ratio = contextSampleRate / targetRate;
   return function (float32) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    const len = Math.floor(float32.length / ratio);
+    // Larger chunks for more context per request (slightly more delay, higher accuracy)
+    const len = Math.floor(float32.length / ratio / 2) * 2 || Math.floor(float32.length / ratio);
     const int16 = new Int16Array(len);
     for (let i = 0; i < len; i++) {
       const v = float32[Math.floor(i * ratio)];
@@ -1087,16 +1093,23 @@ const SYSTEM_PROMPT = 'You are the interviewee in a job interview. Always answer
 
 function onStreamChunk(chunk) {
   if (!aiText) return;
-  aiText.textContent += chunk;
+  aiStreamBuffer += chunk;
+  // During streaming we show plain text; once complete we render rich view with copyable code blocks.
+  aiText.textContent = aiStreamBuffer;
   showAiState('text');
 }
 
 function onStreamDone(currentQuestion) {
   aiBusy = false;
   if (!aiText) return;
-  const fullResponse = (aiText.textContent || '').trim() || '(No response)';
-  if (!aiText.textContent.trim()) aiText.textContent = '(No response)';
-  showAiState('text');
+  const fullResponse = (aiStreamBuffer || '').trim() || '(No response)';
+  if (!aiStreamBuffer.trim()) {
+    aiText.textContent = '(No response)';
+    showAiState('text');
+  } else {
+    renderAiResponse(fullResponse);
+  }
+  aiStreamBuffer = '';
   aiText.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   const now = new Date();
   conversationHistory.push({ role: 'user', content: currentQuestion, time: now });
@@ -1108,6 +1121,59 @@ function onStreamDone(currentQuestion) {
   renderHistory();
   const footerTime = document.getElementById('ai-answer-time');
   if (footerTime) footerTime.textContent = formatTimePM(now);
+}
+
+function renderAiResponse(text) {
+  if (!aiText) return;
+  aiText.innerHTML = '';
+  const parts = text.split('```');
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (i % 2 === 1) {
+      // Code block segment (may start with an optional language line)
+      if (!part.trim()) continue;
+      let lang = '';
+      let codeContent = part;
+      const firstNewline = part.indexOf('\n');
+      if (firstNewline !== -1) {
+        lang = part.slice(0, firstNewline).trim();
+        codeContent = part.slice(firstNewline + 1);
+      }
+      const container = document.createElement('div');
+      container.className = 'ai-code-block';
+      const header = document.createElement('div');
+      header.className = 'ai-code-block-header';
+      const langLabel = document.createElement('span');
+      langLabel.className = 'ai-code-block-lang';
+      langLabel.textContent = lang || 'code';
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'ai-code-block-copy';
+      copyBtn.textContent = 'Copy';
+      copyBtn.addEventListener('click', () => {
+        const textToCopy = codeContent.replace(/\s+$/, '');
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(textToCopy).catch(() => {});
+        }
+      });
+      header.appendChild(langLabel);
+      header.appendChild(copyBtn);
+      const pre = document.createElement('pre');
+      const codeEl = document.createElement('code');
+      codeEl.textContent = codeContent;
+      pre.appendChild(codeEl);
+      container.appendChild(header);
+      container.appendChild(pre);
+      aiText.appendChild(container);
+    } else {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const p = document.createElement('p');
+      p.textContent = trimmed;
+      aiText.appendChild(p);
+    }
+  }
+  showAiState('text');
 }
 
 function renderHistory() {
@@ -1192,10 +1258,11 @@ function formatTimePM(date) {
 }
 
 async function askAiWithQuestion(q) {
-  if (!q || aiBusy || !window.floatingAPI?.callAIStream) return;
+  const userQuestion = (q || '').trim();
+  if (!userQuestion || aiBusy || !window.floatingAPI?.callAIStream) return;
   aiBusy = true;
   aiText.textContent = '';
-  if (aiQuestionText) aiQuestionText.textContent = q;
+  if (aiQuestionText) aiQuestionText.textContent = userQuestion;
   showAiState('loading');
 
   const handleChunk = (e) => onStreamChunk(e.detail);
@@ -1203,7 +1270,7 @@ async function askAiWithQuestion(q) {
     window.removeEventListener('ai-stream-chunk', handleChunk);
     window.removeEventListener('ai-stream-done', handleDone);
     window.removeEventListener('ai-stream-error', handleError);
-    onStreamDone(q);
+    onStreamDone(userQuestion);
   };
   const handleError = (e) => {
     window.removeEventListener('ai-stream-chunk', handleChunk);
@@ -1220,7 +1287,7 @@ async function askAiWithQuestion(q) {
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
     ...recent.map((m) => ({ role: m.role, content: m.content })),
-    { role: 'user', content: q },
+    { role: 'user', content: userQuestion },
   ];
 
   // Get selected model from session config, default to gpt-4o-mini
@@ -1248,9 +1315,43 @@ async function askAi() {
   await askAiWithQuestion(q);
 }
 
-btnAskAi.addEventListener('click', askAi);
+async function triggerManualAiWithMic() {
+  if (aiBusy || !window.floatingAPI?.callAIStream) return;
+  const typed = (questionInput?.value || '').trim();
+  // Bypass pause: use whatever mic has captured so far and cancel pending timers
+  const micCombined = getMicLiveCombined();
+  if (micPauseTimer) {
+    clearTimeout(micPauseTimer);
+    micPauseTimer = null;
+  }
+  if (micFlushPendingTimer) {
+    clearTimeout(micFlushPendingTimer);
+    micFlushPendingTimer = null;
+  }
+  micFlushPending = false;
+  let combined = '';
+  if (typed && micCombined) {
+    combined = typed + '\\n\\nRecent transcript:\\n' + micCombined;
+  } else {
+    combined = typed || micCombined;
+  }
+  if (!combined) return;
+  // Clear typed question only when user provided one
+  if (typed) questionInput.value = '';
+  await askAiWithQuestion(combined);
+}
+
+btnAskAi.addEventListener('click', triggerManualAiWithMic);
+if (btnAskAiHeader) {
+  btnAskAiHeader.addEventListener('click', triggerManualAiWithMic);
+}
 questionInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') askAi();
+  if (e.key === 'Enter' && e.ctrlKey) {
+    e.preventDefault();
+    triggerManualAiWithMic();
+  } else if (e.key === 'Enter') {
+    askAi();
+  }
 });
 
 // Resize only the response block (Answer area): drag the corner to change its height (80–400px).

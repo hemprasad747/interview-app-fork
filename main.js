@@ -150,6 +150,11 @@ setInterval(() => {
 }, SESSION_VISIBILITY_CHECK_MS);
 
 const SESSION_POSITIONS = ['top-left', 'top', 'top-right', 'left', 'center', 'right', 'bottom-left', 'bottom', 'bottom-right'];
+const SESSION_POSITION_GRID = [
+  ['top-left', 'top', 'top-right'],
+  ['left', 'center', 'right'],
+  ['bottom-left', 'bottom', 'bottom-right'],
+];
 let sessionPosition = 'top';
 
 // Electron's "Render frame was disposed" from webContents.send() cannot be caught by try/catch or uncaughtException.
@@ -816,7 +821,8 @@ function fadeWindowOpacity(win, targetOpacity, steps = 4, done) {
   tick();
 }
 
-ipcMain.handle('collapse-session', () => {
+function collapseSession() {
+  if (!sessionActive) return;
   sessionMinimized = true;
   if (leftWindow && !leftWindow.isDestroyed()) leftWindow.hide();
   if (rightWindow && !rightWindow.isDestroyed()) rightWindow.hide();
@@ -853,6 +859,10 @@ ipcMain.handle('collapse-session', () => {
       mainWindow.webContents.send('session-minimized');
     }
   }
+}
+
+ipcMain.handle('collapse-session', () => {
+  collapseSession();
 });
 
 let expandPending = false;
@@ -883,7 +893,7 @@ ipcMain.on('manual-state', (_event, expanded) => {
   finishExpandSession(!!expanded);
 });
 
-ipcMain.handle('expand-session', () => {
+function expandSession() {
   if (!sessionActive || !barWindow || barWindow.isDestroyed()) return;
   sessionMinimized = false;
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -910,6 +920,10 @@ ipcMain.handle('expand-session', () => {
     expandPending = true;
     expandFallbackTimer = setTimeout(() => finishExpandSession(undefined), 150);
   }
+}
+
+ipcMain.handle('expand-session', () => {
+  expandSession();
 });
 
 ipcMain.on('wave-levels', (_event, levels) => {
@@ -1087,6 +1101,10 @@ ipcMain.handle('show-analysis-in-right', (_event, { question, answer }) => {
 ipcMain.handle('request-ai-question', (_event, q) => {
   if (!q || typeof q !== 'string') return;
   pendingAskQuestion = q;
+  // Push event to right panel immediately so it can trigger AI without polling only.
+  if (rightWindow && !rightWindow.isDestroyed()) {
+    rightWindow.webContents.send('ask-question', q);
+  }
 });
 
 ipcMain.handle('getPendingAskQuestion', () => {
@@ -1438,12 +1456,48 @@ function forceShowAllWindows() {
   } catch (_) {}
 }
 
+function moveSessionPositionBy(dx, dy) {
+  if (!sessionActive) return;
+  let row = 1;
+  let col = 1;
+  outer: for (let r = 0; r < SESSION_POSITION_GRID.length; r++) {
+    for (let c = 0; c < SESSION_POSITION_GRID[r].length; c++) {
+      if (SESSION_POSITION_GRID[r][c] === sessionPosition) {
+        row = r;
+        col = c;
+        break outer;
+      }
+    }
+  }
+  const newRow = Math.max(0, Math.min(SESSION_POSITION_GRID.length - 1, row + dy));
+  const newCol = Math.max(0, Math.min(SESSION_POSITION_GRID[0].length - 1, col + dx));
+  const next = SESSION_POSITION_GRID[newRow][newCol];
+  if (!next || next === sessionPosition) return;
+  sessionPosition = next;
+  applySessionLayout();
+}
+
 app.whenReady().then(() => {
   // Only register protocol when packaged; in dev we use an in-app auth window to avoid "Unable to find Electron app" when OS launches electron with URL as argv
   if (app.isPackaged) app.setAsDefaultProtocolClient('alphaviewai');
   createWindow();
 
   globalShortcut.register('CommandOrControl+Shift+R', () => forceShowAllWindows());
+  // Minimize session (collapse to launcher icon)
+  globalShortcut.register('CommandOrControl+M', () => {
+    if (!sessionActive) return;
+    if (sessionMinimized) expandSession();
+    else collapseSession();
+  });
+
+  // Move session window with keyboard (only when session is active)
+  globalShortcut.register('CommandOrControl+PageUp', () => moveSessionPositionBy(0, -1));    // up
+  globalShortcut.register('CommandOrControl+PageDown', () => moveSessionPositionBy(0, 1));   // down
+  globalShortcut.register('CommandOrControl+Left', () => moveSessionPositionBy(-1, 0));      // left
+  globalShortcut.register('CommandOrControl+Right', () => moveSessionPositionBy(1, 0));      // right
+  // Also support Ctrl+Up / Ctrl+Down for vertical movement (more intuitive)
+  globalShortcut.register('CommandOrControl+Up', () => moveSessionPositionBy(0, -1));        // up
+  globalShortcut.register('CommandOrControl+Down', () => moveSessionPositionBy(0, 1));       // down
   // Handle protocol URL when this instance was launched with alphaviewai:// (e.g. first launch from browser)
   const cmd = process.argv.find((a) => typeof a === 'string' && a.startsWith('alphaviewai://'));
   if (cmd) handleAuthUrl(cmd);

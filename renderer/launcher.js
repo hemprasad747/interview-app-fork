@@ -333,10 +333,10 @@ btnStartSession.addEventListener('click', () => {
   const speechProvider = (selectSpeechProvider?.value === 'azure' || selectSpeechProvider?.value === 'deepgram') ? selectSpeechProvider.value : 'azure';
   const selectAiModel = document.getElementById('select-ai-model');
   const aiModel = (
-    selectAiModel?.value === 'gpt-4o-mini' ||
     selectAiModel?.value === 'gpt-4.1' ||
+    selectAiModel?.value === 'gpt-4o-mini' ||
     selectAiModel?.value === 'gpt-4.1-mini'
-  ) ? selectAiModel.value : 'gpt-4o-mini';
+  ) ? selectAiModel.value : 'gpt-4.1';
   let instructions = (inputInstructions && inputInstructions.value) ? inputInstructions.value.trim() : '';
   if (sessionType === 'exam') {
     instructions = instructions ? instructions + '\n\n' + EXAM_MODE_INSTRUCTIONS : EXAM_MODE_INSTRUCTIONS;
