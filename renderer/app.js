@@ -1258,8 +1258,42 @@ function formatTimePM(date) {
 }
 
 async function askAiWithQuestion(q) {
-  const userQuestion = (q || '').trim();
-  if (!userQuestion || aiBusy || !window.floatingAPI?.callAIStream) return;
+  if (aiBusy || !window.floatingAPI?.callAIStream) return;
+  let userQuestion = (q || '').trim();
+  // If no explicit question provided, fall back to latest transcript entry (mic or system)
+  if (!userQuestion && Array.isArray(transcriptHistory) && transcriptHistory.length > 0) {
+    for (let i = transcriptHistory.length - 1; i >= 0; i--) {
+      const t = transcriptHistory[i];
+      if (t && t.text && !t.text.startsWith('[')) {
+        userQuestion = t.text.trim();
+        break;
+      }
+    }
+  }
+  // Auto-expand single-word language follow-ups into explicit convert instructions
+  const lang = (userQuestion || '').toLowerCase().trim();
+  const LANGS = new Set(['java','python','javascript','js','c++','c#','go','ruby','php','kotlin','swift','typescript','rust']);
+  if (LANGS.has(lang)) {
+    const lastAssistant = conversationHistory.slice().reverse().find(m => m.role === 'assistant' && m.content && m.content.trim());
+    if (lastAssistant) {
+      userQuestion = `Convert the previous assistant answer to ${lang}. Keep explanations and provide runnable code examples where relevant.`;
+    } else {
+      userQuestion = `Provide an implementation in ${lang}.`;
+    }
+  }
+  // Auto-expand short arithmetic/modify follow-ups (e.g. "+1", "add 1", "increment by 1")
+  const opText = (userQuestion || '').toLowerCase().trim();
+  const opSimple = /^([+\-*/])\s*\d+$/; // +1, -2, *3, /4
+  const opWords = /^(?:add|plus|increment|subtract|minus|decrease|multiply|times|divide|divided by)\b.*?(-?\d+)/i;
+  if (opSimple.test(opText) || opWords.test(opText) || /^(\+|\-)\s*1$/.test(opText)) {
+    const lastAssistant = conversationHistory.slice().reverse().find(m => m.role === 'assistant' && m.content && m.content.trim());
+    if (lastAssistant) {
+      userQuestion = `Modify the previous assistant answer by applying this operation: "${opText}". If the previous assistant answer contained numeric results or example outputs, update those results accordingly and show the new result. If the previous answer is non-numeric, explain how this operation applies and provide the adjusted answer.`;
+    } else {
+      userQuestion = `Apply this operation "${opText}" to the previous context or provide the result of the operation where applicable.`;
+    }
+  }
+  if (!userQuestion) return;
   aiBusy = true;
   aiText.textContent = '';
   if (aiQuestionText) aiQuestionText.textContent = userQuestion;
@@ -1318,8 +1352,9 @@ async function askAi() {
 async function triggerManualAiWithMic() {
   if (aiBusy || !window.floatingAPI?.callAIStream) return;
   const typed = (questionInput?.value || '').trim();
-  // Bypass pause: use whatever mic has captured so far and cancel pending timers
+  // Bypass pause: use whatever mic/system have captured so far and cancel pending timers
   const micCombined = getMicLiveCombined();
+  const systemCombined = getSystemLiveCombined();
   if (micPauseTimer) {
     clearTimeout(micPauseTimer);
     micPauseTimer = null;
@@ -1329,13 +1364,43 @@ async function triggerManualAiWithMic() {
     micFlushPendingTimer = null;
   }
   micFlushPending = false;
-  let combined = '';
-  if (typed && micCombined) {
-    combined = typed + '\\n\\nRecent transcript:\\n' + micCombined;
-  } else {
-    combined = typed || micCombined;
+  if (systemAudioPauseTimer) {
+    clearTimeout(systemAudioPauseTimer);
+    systemAudioPauseTimer = null;
   }
-  if (!combined) return;
+  // Build a combined question using both speaker (system) and mic context
+  const contextParts = [];
+  if ((systemCombined || '').trim()) {
+    contextParts.push('Interviewer question: ' + systemCombined.trim());
+  }
+  if ((micCombined || '').trim()) {
+    contextParts.push('My current draft answer (mic): ' + micCombined.trim());
+  }
+  const contextText = contextParts.join('\\n\\n');
+  let combined = '';
+  if (typed) {
+    combined = typed + (contextText ? '\\n\\nContext:\\n' + contextText : '');
+  } else {
+    combined = contextText;
+  }
+  
+  // If we still have nothing explicit, get latest transcript from history
+  if (!combined && Array.isArray(transcriptHistory) && transcriptHistory.length > 0) {
+    // Get the latest transcript entry (most recent question)
+    for (let i = transcriptHistory.length - 1; i >= 0; i--) {
+      const t = transcriptHistory[i];
+      if (t && t.text && !t.text.startsWith('[')) {
+        combined = t.text.trim();
+        break;
+      }
+    }
+  }
+  
+  // If still nothing, try askAiWithQuestion with empty string (it has its own fallback)
+  if (!combined) {
+    await askAiWithQuestion('');
+    return;
+  }
   // Clear typed question only when user provided one
   if (typed) questionInput.value = '';
   await askAiWithQuestion(combined);
@@ -1345,12 +1410,26 @@ btnAskAi.addEventListener('click', triggerManualAiWithMic);
 if (btnAskAiHeader) {
   btnAskAiHeader.addEventListener('click', triggerManualAiWithMic);
 }
-questionInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && e.ctrlKey) {
-    e.preventDefault();
+if (questionInput) {
+  // Regular Enter sends question
+  questionInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      askAi();
+    }
+  });
+}
+
+// Listen for global Shift+Enter shortcut from main process
+window.addEventListener('trigger-ai-button', () => {
+  console.log('trigger-ai-button event received in app.js');
+  if (typeof triggerManualAiWithMic === 'function') {
+    console.log('Calling triggerManualAiWithMic()');
     triggerManualAiWithMic();
-  } else if (e.key === 'Enter') {
-    askAi();
+  } else if (btnAskAi) {
+    console.log('Clicking btnAskAi');
+    btnAskAi.click();
+  } else {
+    console.log('Neither triggerManualAiWithMic nor btnAskAi available');
   }
 });
 

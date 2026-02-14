@@ -17,7 +17,7 @@ let currentAnswerIndex = 0;
 let liveAnswerContent = '';
 let liveQuestionContent = '';
 
-const LAST_PAIRS_FOR_REQUEST = 6; // More conversation history for ChatGPT-like continuity
+const LAST_PAIRS_FOR_REQUEST = 7; // More conversation history for ChatGPT-like continuity (keep 7 pairs)
 const MAX_RECENT_TRANSCRIPT_PARTS = 4;
 
 /** Return only the current question - no merging with previous transcript to avoid context bleed. */
@@ -209,7 +209,7 @@ async function askAiWithQuestion(q) {
   window.addEventListener('ai-stream-done', handleDone);
   window.addEventListener('ai-stream-error', handleError);
 
-  const [config, , , transcript] = await Promise.all([
+  const [config, conversationHistory, , transcript] = await Promise.all([
     window.floatingAPI?.getSessionConfig?.() || Promise.resolve(null),
     window.floatingAPI?.getConversationHistory?.() || Promise.resolve([]),
     window.floatingAPI?.getInterviewSummary?.() || Promise.resolve(''),
@@ -233,17 +233,40 @@ async function askAiWithQuestion(q) {
     aiBusy = false;
     return;
   }
+  // Auto-expand single-word language follow-ups into explicit convert instructions
+  const lang = (actualQuestion || '').toLowerCase().trim();
+  const LANGS = new Set(['java','python','javascript','js','c++','c#','go','ruby','php','kotlin','swift','typescript','rust']);
+  if (LANGS.has(lang)) {
+    const lastAssistant = (conversationHistory || []).slice().reverse().find(m => m.role === 'assistant' && m.content && m.content.trim());
+    if (lastAssistant) {
+      actualQuestion = `Convert the previous assistant answer to ${lang}. Keep explanations and provide runnable code examples where relevant.`;
+    } else {
+      actualQuestion = `Provide an implementation in ${lang}.`;
+    }
+  }
+  // Auto-expand short arithmetic/modify follow-ups (e.g. "+1", "add 1", "increment by 1")
+  const opText = (actualQuestion || '').toLowerCase().trim();
+  const opSimple = /^([+\-*/])\s*\d+$/; // +1, -2, *3, /4
+  const opWords = /^(?:add|plus|increment|subtract|minus|decrease|multiply|times|divide|divided by)\b.*?(-?\d+)/i;
+  if (opSimple.test(opText) || opWords.test(opText) || /^(\+|\-)\s*1$/.test(opText)) {
+    const lastAssistant = (conversationHistory || []).slice().reverse().find(m => m.role === 'assistant' && m.content && m.content.trim());
+    if (lastAssistant) {
+      actualQuestion = `Modify the previous assistant answer by applying this operation: "${opText}". If the previous assistant answer contained numeric results or example outputs, update those results accordingly and show the new result. If the previous answer is non-numeric, explain how this operation applies and provide the adjusted answer.`;
+    } else {
+      actualQuestion = `Apply this operation "${opText}" to the previous context or provide the result of the operation where applicable.`;
+    }
+  }
   
   setQuestionBlock(actualQuestion);
   showAiState('loading');
   
-  // No interview summary - each question is completely independent
+  // Use recent conversation history so follow-ups are contextual (continuous conversation)
   const systemPrompt = buildSystemPrompt(config, null);
-  // No transcript merging - send only the current question
-  const userContent = actualQuestion;
+  const recent = (conversationHistory || []).slice(-LAST_PAIRS_FOR_REQUEST * 2);
   const messages = [
     { role: 'system', content: systemPrompt },
-    { role: 'user', content: userContent },
+    ...recent.map((m) => ({ role: m.role, content: m.content })),
+    { role: 'user', content: actualQuestion },
   ];
 
   // Get selected model from config, default to gpt-4o-mini

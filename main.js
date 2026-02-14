@@ -509,6 +509,14 @@ function createSessionWindows() {
     try { barWindow.setContentProtection(true); } catch (_) {}
   }
   barWindow.setMenuBarVisibility(false);
+  // Intercept Shift+Enter before it reaches renderer
+  barWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Enter' && input.shift && sessionActive) {
+      console.log('Shift+Enter detected in barWindow, triggering AI');
+      event.preventDefault();
+      barWindow.webContents.send('trigger-ai-button');
+    }
+  });
   barWindow.loadFile(path.join(__dirname, 'renderer', 'bar.html'));
   setupSessionHandlers(barWindow);
   barWindow.webContents.once('destroyed', () => {
@@ -716,6 +724,14 @@ function createWindow() {
     try { mainWindow.setContentProtection(true); } catch (_) {}
   }
   mainWindow.setMenuBarVisibility(false);
+  // Intercept Shift+Enter before it reaches renderer (for session view)
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Enter' && input.shift && sessionActive) {
+      console.log('Shift+Enter detected in mainWindow, triggering AI');
+      event.preventDefault();
+      mainWindow.webContents.send('trigger-ai-button');
+    }
+  });
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'launcher.html'));
 
   mainWindow.webContents.session.setPermissionRequestHandler((_w, permission, callback) => {
@@ -1099,7 +1115,8 @@ ipcMain.handle('show-analysis-in-right', (_event, { question, answer }) => {
 });
 
 ipcMain.handle('request-ai-question', (_event, q) => {
-  if (!q || typeof q !== 'string') return;
+  // Allow empty string as a signal to "use latest transcript" in right.js
+  if (typeof q !== 'string') return;
   pendingAskQuestion = q;
   // Push event to right panel immediately so it can trigger AI without polling only.
   if (rightWindow && !rightWindow.isDestroyed()) {
@@ -1489,6 +1506,10 @@ app.whenReady().then(() => {
     if (sessionMinimized) expandSession();
     else collapseSession();
   });
+
+  // Note: Using before-input-event handlers on windows instead of globalShortcut
+  // because globalShortcut doesn't support Shift+Enter reliably
+  // The before-input-event handlers are set up when windows are created above
 
   // Move session window with keyboard (only when session is active)
   globalShortcut.register('CommandOrControl+PageUp', () => moveSessionPositionBy(0, -1));    // up

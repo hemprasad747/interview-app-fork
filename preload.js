@@ -15,6 +15,9 @@ ipcRenderer.on('free-session-cooldown', (_e, data) => {
 ipcRenderer.on('show-analysis-result', (_e, data) => {
   window.dispatchEvent(new CustomEvent('show-analysis-result', { detail: data }));
 });
+ipcRenderer.on('trigger-ai-button', () => {
+  window.dispatchEvent(new CustomEvent('trigger-ai-button'));
+});
 
 contextBridge.exposeInMainWorld('floatingAPI', {
   getAzureSpeechConfig: () => ipcRenderer.invoke('get-azure-speech-config'),

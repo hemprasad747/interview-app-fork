@@ -914,19 +914,54 @@ function sendBarQuestion() {
 }
 
 /** Trigger AI using current typed question + live mic transcript (mic context). */
-function triggerBarAiWithMic() {
+async function triggerBarAiWithMic() {
   if (!window.floatingAPI?.requestAskQuestion) return;
   const typed = (barQuestionInput?.value || '').trim();
   const mic = (getMicLiveCombined() || '').trim();
-  const combined = (typed && mic) ? `${typed} ${mic}` : (typed || mic);
-  if (!combined) return;
-  // Bypass mic pause delay – flush what we have and clear buffers
+  const system = (getSystemLiveCombined() || '').trim();
+  const parts = [];
+  if (typed) parts.push(typed);
+  if (system) parts.push(system);
+  if (mic) parts.push(mic);
+  let combined = parts.join('\n\n').trim();
+  
+  // If nothing live, get latest transcript from history
+  if (!combined && window.floatingAPI?.getTranscriptHistory) {
+    try {
+      const transcript = await (window.floatingAPI.getTranscriptHistory() || Promise.resolve([]));
+      if (Array.isArray(transcript) && transcript.length > 0) {
+        // Get the latest transcript entry (most recent question)
+        for (let i = transcript.length - 1; i >= 0; i--) {
+          const t = transcript[i];
+          if (t && t.text && !t.text.startsWith('[')) {
+            combined = t.text.trim();
+            break;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+  
+  // If still nothing, send empty string (right.js will handle fallback)
+  if (!combined) {
+    window.floatingAPI.requestAskQuestion('');
+    if (barQuestionInput) barQuestionInput.value = '';
+    return;
+  }
+  
+  // Bypass pause delays – flush what we have and clear buffers so auto-trigger won't double-send
   if (micPauseTimer) {
     clearTimeout(micPauseTimer);
     micPauseTimer = null;
   }
+  if (systemAudioPauseTimer) {
+    clearTimeout(systemAudioPauseTimer);
+    systemAudioPauseTimer = null;
+  }
   micQuestionBuffer = '';
   micLiveBuffer = '';
+  systemAudioQuestionBuffer = '';
+  systemAudioLiveBuffer = '';
   window.floatingAPI.requestAskQuestion(combined);
   if (barQuestionInput) barQuestionInput.value = '';
 }
@@ -1012,17 +1047,27 @@ if (btnAiBar) btnAiBar.addEventListener('click', triggerBarAiWithMic);
 if (barBtnSend) barBtnSend.addEventListener('click', sendBarQuestion);
 if (btnPhotoAnalysis) btnPhotoAnalysis.addEventListener('click', () => runPhotoAnalysis());
 if (barQuestionInput) {
+  // Regular Enter sends question
   barQuestionInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        triggerBarAiWithMic();
-      } else {
-        sendBarQuestion();
-      }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      sendBarQuestion();
     }
   });
 }
+
+// Listen for global Shift+Enter shortcut from main process
+window.addEventListener('trigger-ai-button', () => {
+  console.log('trigger-ai-button event received in bar.js');
+  if (typeof triggerBarAiWithMic === 'function') {
+    console.log('Calling triggerBarAiWithMic()');
+    triggerBarAiWithMic();
+  } else if (btnAiBar) {
+    console.log('Clicking btnAiBar');
+    btnAiBar.click();
+  } else {
+    console.log('Neither triggerBarAiWithMic nor btnAiBar available');
+  }
+});
 
 if (btnMic) btnMic.addEventListener('click', toggleMic);
 if (btnSystemAudio) btnSystemAudio.addEventListener('click', toggleSystemAudio);
